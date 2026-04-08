@@ -51,6 +51,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: insErr.message }, { status: 500 });
   }
 
+  const { count: swipeCount, error: countErr } = await supabase
+    .from("swipes")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user.id);
+
+  if (countErr) {
+    return NextResponse.json({ error: countErr.message }, { status: 500 });
+  }
+
+  const total = swipeCount ?? 0;
+  if (total < SWIPES_FOR_PROFILE) {
+    return NextResponse.json({
+      ok: true,
+      swipeCount: total,
+      personalityReady: false,
+      archetype: null,
+      bestMatch: null,
+      newMatches: [],
+    });
+  }
+
   const { data: swipeRows, error: swErr } = await supabase
     .from("swipes")
     .select("swipe_type, meme_id")
@@ -77,7 +98,6 @@ export async function POST(request: Request) {
     tags: tagByMeme.get(r.meme_id) ?? [],
   }));
 
-  const total = flat.length;
   let personalityReady = false;
   let archetypePayload: {
     id: string;
@@ -96,59 +116,57 @@ export async function POST(request: Request) {
     matchId: string;
   } | null = null;
 
-  if (total >= SWIPES_FOR_PROFILE) {
-    const vector = computePersonalityVector(flat);
-    personalityReady = true;
-    const arche = getArchetypeFromVector(vector);
-    archetypePayload = {
-      id: arche.id,
-      title: arche.title,
-      shareLine: arche.shareLine,
-      description: arche.description,
-    };
+  const vector = computePersonalityVector(flat);
+  personalityReady = true;
+  const arche = getArchetypeFromVector(vector);
+  archetypePayload = {
+    id: arche.id,
+    title: arche.title,
+    shareLine: arche.shareLine,
+    description: arche.description,
+  };
 
-    const { data: profile } = await supabase
-      .from("users")
-      .select("gender")
-      .eq("id", user.id)
-      .single();
+  const { data: profile } = await supabase
+    .from("users")
+    .select("gender")
+    .eq("id", user.id)
+    .single();
 
-    const gender = (profile?.gender ?? "male") as Gender;
+  const gender = (profile?.gender ?? "male") as Gender;
 
-    const { error: upErr } = await supabase
-      .from("users")
-      .update({
-        personality_vector: vector,
-        archetype: arche.title,
-      })
-      .eq("id", user.id);
+  const { error: upErr } = await supabase
+    .from("users")
+    .update({
+      personality_vector: vector,
+      archetype: arche.title,
+    })
+    .eq("id", user.id);
 
-    if (upErr) {
-      return NextResponse.json({ error: upErr.message }, { status: 500 });
+  if (upErr) {
+    return NextResponse.json({ error: upErr.message }, { status: 500 });
+  }
+
+  try {
+    const result = await findBestDemoMatchAndInsert(user.id, gender, vector);
+    if (result) {
+      const svc = createServiceClient();
+      const { data: peer } = await svc
+        .from("users")
+        .select("email, display_name, avatar_url, age")
+        .eq("id", result.peerId)
+        .single();
+      bestMatch = {
+        peerId: result.peerId,
+        score: result.score,
+        peerEmail: peer?.email,
+        displayName: peer?.display_name ?? undefined,
+        avatarUrl: peer?.avatar_url,
+        age: peer?.age,
+        matchId: result.matchId,
+      };
     }
-
-    try {
-      const result = await findBestDemoMatchAndInsert(user.id, gender, vector);
-      if (result) {
-        const svc = createServiceClient();
-        const { data: peer } = await svc
-          .from("users")
-          .select("email, display_name, avatar_url, age")
-          .eq("id", result.peerId)
-          .single();
-        bestMatch = {
-          peerId: result.peerId,
-          score: result.score,
-          peerEmail: peer?.email,
-          displayName: peer?.display_name ?? undefined,
-          avatarUrl: peer?.avatar_url,
-          age: peer?.age,
-          matchId: result.matchId,
-        };
-      }
-    } catch (e) {
-      console.error("match pipeline", e);
-    }
+  } catch (e) {
+    console.error("match pipeline", e);
   }
 
   return NextResponse.json({

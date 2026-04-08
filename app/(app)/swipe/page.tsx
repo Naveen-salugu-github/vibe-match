@@ -56,6 +56,7 @@ export default function SwipePage() {
   const qc = useQueryClient();
   const [stack, setStack] = useState<MemeItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [optimisticSwipeCount, setOptimisticSwipeCount] = useState<number | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [matchOpen, setMatchOpen] = useState(false);
   const [matchPeer, setMatchPeer] = useState<{
@@ -90,6 +91,12 @@ export default function SwipePage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (profileQuery.data?.swipe_count != null && optimisticSwipeCount === null) {
+      setOptimisticSwipeCount(profileQuery.data.swipe_count);
+    }
+  }, [profileQuery.data?.swipe_count, optimisticSwipeCount]);
+
   const refill = useCallback(async () => {
     const fresh = await qc.fetchQuery({ queryKey: ["memes-feed"], queryFn: fetchMemes });
     setStack((prev) => {
@@ -108,7 +115,8 @@ export default function SwipePage() {
     }
   }, [stack.length, refill]);
 
-  const swipeCount = profileQuery.data?.swipe_count ?? 0;
+  const swipeCount =
+    optimisticSwipeCount ?? profileQuery.data?.swipe_count ?? 0;
   const progressPct = Math.min(100, (swipeCount / SWIPES_FOR_PROFILE) * 100);
 
   const archetype = profileQuery.data?.archetype;
@@ -124,6 +132,7 @@ export default function SwipePage() {
       if (!meme || busy) return;
       const swipe_type = dir === "right" ? "like" : "dislike";
       setStack((s) => s.slice(1));
+      setOptimisticSwipeCount((prev) => (prev ?? profileQuery.data?.swipe_count ?? 0) + 1);
       setBusy(true);
       try {
         const res = await fetch("/api/swipe", {
@@ -133,12 +142,17 @@ export default function SwipePage() {
         });
         const data = (await res.json()) as {
           ok?: boolean;
+          swipeCount?: number;
           bestMatch?: BestMatchDto | null;
           error?: string;
         };
         if (!res.ok) {
           console.error(data.error);
+          setOptimisticSwipeCount(profileQuery.data?.swipe_count ?? null);
           return;
+        }
+        if (typeof data.swipeCount === "number") {
+          setOptimisticSwipeCount(data.swipeCount);
         }
         await qc.invalidateQueries({ queryKey: ["profile"] });
 
@@ -164,7 +178,7 @@ export default function SwipePage() {
         setBusy(false);
       }
     },
-    [stack, busy, qc, profileQuery.data?.id]
+    [stack, busy, qc, profileQuery.data?.id, profileQuery.data?.swipe_count]
   );
 
   useSwipeKeyboard((dir) => void handleSwipeDir(dir));
@@ -196,6 +210,11 @@ export default function SwipePage() {
             </CardHeader>
             <CardContent className="space-y-2">
               <Progress value={progressPct} />
+              {swipeCount >= SWIPES_FOR_PROFILE && (
+                <p className="text-xs text-cyan-200/90">
+                  {busy ? "Looking for matches..." : "Looks for matches. Check Matches tab."}
+                </p>
+              )}
             </CardContent>
           </Card>
 
