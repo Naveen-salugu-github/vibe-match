@@ -67,7 +67,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/swipe", request.url));
   }
 
-  if ((path === "/login" || path === "/signup") && user) {
+  if ((path === "/login" || path === "/signup" || path === "/auth/email" || path === "/auth/otp") && user) {
     const url = request.nextUrl.clone();
     url.pathname = profileCompleted ? "/swipe" : ONBOARDING;
     return NextResponse.redirect(url);

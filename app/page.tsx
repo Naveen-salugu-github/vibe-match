@@ -17,10 +17,10 @@ export default function LandingPage() {
           </div>
           <div className="flex gap-2">
             <Button variant="ghost" asChild>
-              <Link href="/login">Log in</Link>
+              <Link href="/auth/email">Continue with email code</Link>
             </Button>
             <Button asChild>
-              <Link href="/signup">Get started</Link>
+              <Link href="/auth/email">Get started</Link>
             </Button>
           </div>
         </header>
@@ -42,10 +42,10 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-wrap gap-3">
               <Button size="lg" asChild className="rounded-2xl px-8">
-                <Link href="/signup">Start swiping</Link>
+                <Link href="/auth/email">Continue with email code</Link>
               </Button>
               <Button size="lg" variant="secondary" asChild className="rounded-2xl px-8">
-                <Link href="/login">I have an account</Link>
+                <Link href="/auth/email">Continue with email code</Link>
               </Button>
             </div>
           </div>
