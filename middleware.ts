@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 const PROTECTED = ["/swipe", "/matches", "/chat", "/admin"];
+const ONBOARDING = "/onboarding/profile";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -36,6 +37,17 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+
+  let profileCompleted = false;
+  if (user) {
+    const { data: row } = await supabase
+      .from("users")
+      .select("profile_completed")
+      .eq("id", user.id)
+      .maybeSingle();
+    profileCompleted = row?.profile_completed === true;
+  }
+
   const needsAuth = PROTECTED.some((p) => path === p || path.startsWith(`${p}/`));
 
   if (needsAuth && !user) {
@@ -45,9 +57,19 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  if (needsAuth && user && !profileCompleted) {
+    const url = request.nextUrl.clone();
+    url.pathname = ONBOARDING;
+    return NextResponse.redirect(url);
+  }
+
+  if (user && path === ONBOARDING && profileCompleted) {
+    return NextResponse.redirect(new URL("/swipe", request.url));
+  }
+
   if ((path === "/login" || path === "/signup") && user) {
     const url = request.nextUrl.clone();
-    url.pathname = "/swipe";
+    url.pathname = profileCompleted ? "/swipe" : ONBOARDING;
     return NextResponse.redirect(url);
   }
 

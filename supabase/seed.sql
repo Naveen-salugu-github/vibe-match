@@ -60,4 +60,44 @@ VALUES
     'https://picsum.photos/seed/vibe12/800/1000',
     '["dark_humor", "politics", "general"]'::jsonb,
     'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe13/800/1000',
+    '["wholesome", "gaming", "reddit"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe14/800/1000',
+    '["sarcasm", "politics", "general"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe15/800/1000',
+    '["anime", "dark_humor", "reddit"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe16/800/1000',
+    '["animals", "wholesome", "general"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe17/800/1000',
+    '["gaming", "sarcasm", "general"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe18/800/1000',
+    '["dark_humor", "anime", "general"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe19/800/1000',
+    '["wholesome", "politics", "reddit"]'::jsonb,
+    'seed'
+  ),
+  (
+    'https://picsum.photos/seed/vibe20/800/1000',
+    '["sarcasm", "gaming", "reddit"]'::jsonb,
+    'seed'
   );

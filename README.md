@@ -1,10 +1,10 @@
 # VibeMatch
 
-Production-ready MVP: a **meme-swiping** web app (Tinder-adjacent, not a clone) where users swipe memes to build a **personality vector** from meme tags, then get matched with **opposite-gender** users with **cosine similarity > 0.7**. Privacy-first: **Supabase Auth with email + password only** (no phone numbers). Stack: **Next.js 14 (App Router)**, **TailwindCSS**, **Framer Motion**, **shadcn-style UI**, **TanStack Query**, **Supabase** (Postgres + Auth + Realtime), deploy on **Vercel**; optional **Railway** cron for meme ingestion.
+Production-ready MVP: a **meme-swiping** web app (Tinder-adjacent, not a clone) where users swipe memes to build a **personality vector** from meme tags, see a **vibe archetype** (Chaos Goblin, Wholesome Bean, etc.), then get matched with the **closest opposite-gender profile** from a **demo vibe pool** (15 female + 15 male seeded users), preferring **cosine similarity ≥ 0.7**. Privacy-first: **Supabase Auth with email + password only** (no phone numbers). Stack: **Next.js 14 (App Router)**, **TailwindCSS**, **Framer Motion**, **shadcn-style UI**, **TanStack Query**, **Supabase** (Postgres + Auth + Realtime), deploy on **Vercel**; optional **Railway** cron for meme ingestion.
 
 ## Features
 
-- Landing → email signup/login → swipe onboarding copy → personality from tags after **20 swipes** → match discovery → **realtime chat** with moderation (blocks phones, emails, Instagram/Telegram/WhatsApp patterns).
+- Landing → signup (**male/female**) → **mandatory onboarding** (age 18+, profile photo to Supabase Storage) → swipe → **vibe archetype** after **20 swipes** → **best opposite-gender match** modal with **Text this person** → **realtime chat** with moderation (blocks phones, emails, Instagram/Telegram/WhatsApp patterns).
 - **Glass / liquid UI** (`#0b0f19` base, violet–cyan accents), **MemeCard** stack with drag + buttons + **keyboard** (← / →).
 - **MatchReveal** modal + **confetti** on first match (per browser).
 - **Admin fallback**: `/admin/upload` posts to `/api/admin/memes` with `ADMIN_SECRET`.
@@ -27,10 +27,11 @@ workers/       Railway cron meme ingestion
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. **Authentication → Providers**: enable Email; disable phone if shown.
-3. **SQL Editor**: run `supabase/schema.sql` end-to-end.
-4. **Optional seed**: run `supabase/seed.sql` for placeholder memes (picsum images).
-5. **Realtime** (for chat live updates): **Database → Replication** (or SQL) — add table `public.messages` to the `supabase_realtime` publication.
-6. **Auth → URL configuration**: add your local and production URLs:
+3. **SQL Editor**: run `supabase/schema.sql` end-to-end. If you already had an older schema, also run `supabase/migration_002_profile_demo.sql`.
+4. **Optional memes seed**: run `supabase/seed.sql` for placeholder memes (picsum images).
+5. **Demo match pool (30 fake opposite-gender profiles)**: from the project root, with `SUPABASE_SERVICE_ROLE_KEY` set, run `npm run seed:demo`. This creates auth users `demo-f-01@vibematch.demo` … `demo-m-15@vibematch.demo` with photos (randomuser.me), ages, and personality vectors. Re-run safe: it upserts existing emails.
+6. **Realtime** (for chat live updates): **Database → Replication** (or SQL) — add table `public.messages` to the `supabase_realtime` publication.
+7. **Auth → URL configuration**: add your local and production URLs:
    - Site URL: `http://localhost:3000` (dev) and your Vercel URL (prod).
    - Redirect URLs: include `http://localhost:3000/auth/callback` and `https://YOUR_DOMAIN/auth/callback`.
 
@@ -52,7 +53,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Sign up with email/password and gender, then swipe. After 20 swipes, `personality_vector` updates and matching runs against other users who also have a non-empty vector and compatible gender rules (**male↔female**, **other↔other**).
+Open [http://localhost:3000](http://localhost:3000). Sign up, finish **profile onboarding** (photo + age), then swipe. After 20 swipes you get a **vibe archetype** and your **closest opposite-gender demo match** (requires `npm run seed:demo`). Matching uses **male ↔ female** only for real users.
 
 ## 4. API routes
 
@@ -62,7 +63,7 @@ Open [http://localhost:3000](http://localhost:3000). Sign up with email/password
 | `POST /api/swipe` | Record swipe; recompute vector after 20; run matcher |
 | `GET /api/match` | List matches (peer email enriched server-side) |
 | `GET/POST /api/messages` | List/send messages (POST runs moderation) |
-| `GET /api/profile` | Current user + swipe count + vector |
+| `GET/PATCH /api/profile` | Current user + swipe count + archetype; complete profile (photo URL, age, gender) |
 | `POST /api/admin/memes` | Insert meme (`x-admin-secret` header) |
 
 ## 5. Deploy frontend (Vercel)
@@ -98,6 +99,7 @@ Keep API contracts stable (`/api/*` JSON), share **types** (`PersonalityVector`,
 | Dev | `npm run dev` |
 | Build | `npm run build` |
 | Worker | `npm run worker:ingest` |
+| Demo users (30) | `npm run seed:demo` |
 
 ---
 

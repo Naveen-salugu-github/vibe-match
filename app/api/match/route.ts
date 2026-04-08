@@ -27,7 +27,11 @@ export async function GET() {
   const enriched = await Promise.all(
     (rows ?? []).map(async (m) => {
       const peerId = m.user1_id === user.id ? m.user2_id : m.user1_id;
-      const { data: peer } = await svc.from("users").select("email").eq("id", peerId).single();
+      const { data: peer } = await svc
+        .from("users")
+        .select("email, display_name, avatar_url, age, is_demo_profile")
+        .eq("id", peerId)
+        .single();
       return {
         id: m.id,
         compatibility_score: m.compatibility_score,
@@ -35,6 +39,10 @@ export async function GET() {
         peer: {
           id: peerId,
           email: peer?.email ?? "",
+          display_name: peer?.display_name ?? null,
+          avatar_url: peer?.avatar_url ?? null,
+          age: peer?.age ?? null,
+          is_demo_profile: peer?.is_demo_profile === true,
         },
       };
     })

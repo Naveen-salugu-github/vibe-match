@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { getArchetypeFromVector } from "@/lib/archetypes";
 import {
   computePersonalityVector,
   SWIPES_FOR_PROFILE,
   type Gender,
 } from "@/lib/matching";
-import { findAndInsertMatches } from "@/lib/match-service";
+import { findBestDemoMatchAndInsert } from "@/lib/match-service";
 
 export const dynamic = "force-dynamic";
 
@@ -78,11 +79,33 @@ export async function POST(request: Request) {
 
   const total = flat.length;
   let personalityReady = false;
-  let newMatches: { peerId: string; score: number; peerEmail?: string }[] = [];
+  let archetypePayload: {
+    id: string;
+    title: string;
+    shareLine: string;
+    description: string;
+  } | null = null;
+
+  let bestMatch: {
+    peerId: string;
+    score: number;
+    peerEmail?: string;
+    displayName?: string;
+    avatarUrl?: string | null;
+    age?: number | null;
+    matchId: string;
+  } | null = null;
 
   if (total >= SWIPES_FOR_PROFILE) {
     const vector = computePersonalityVector(flat);
     personalityReady = true;
+    const arche = getArchetypeFromVector(vector);
+    archetypePayload = {
+      id: arche.id,
+      title: arche.title,
+      shareLine: arche.shareLine,
+      description: arche.description,
+    };
 
     const { data: profile } = await supabase
       .from("users")
@@ -90,11 +113,14 @@ export async function POST(request: Request) {
       .eq("id", user.id)
       .single();
 
-    const gender = (profile?.gender ?? "other") as Gender;
+    const gender = (profile?.gender ?? "male") as Gender;
 
     const { error: upErr } = await supabase
       .from("users")
-      .update({ personality_vector: vector })
+      .update({
+        personality_vector: vector,
+        archetype: arche.title,
+      })
       .eq("id", user.id);
 
     if (upErr) {
@@ -102,14 +128,24 @@ export async function POST(request: Request) {
     }
 
     try {
-      const result = await findAndInsertMatches(user.id, gender, vector);
-      const svc = createServiceClient();
-      newMatches = await Promise.all(
-        result.newMatches.map(async (m) => {
-          const { data: peer } = await svc.from("users").select("email").eq("id", m.peerId).single();
-          return { peerId: m.peerId, score: m.score, peerEmail: peer?.email };
-        })
-      );
+      const result = await findBestDemoMatchAndInsert(user.id, gender, vector);
+      if (result) {
+        const svc = createServiceClient();
+        const { data: peer } = await svc
+          .from("users")
+          .select("email, display_name, avatar_url, age")
+          .eq("id", result.peerId)
+          .single();
+        bestMatch = {
+          peerId: result.peerId,
+          score: result.score,
+          peerEmail: peer?.email,
+          displayName: peer?.display_name ?? undefined,
+          avatarUrl: peer?.avatar_url,
+          age: peer?.age,
+          matchId: result.matchId,
+        };
+      }
     } catch (e) {
       console.error("match pipeline", e);
     }
@@ -119,6 +155,17 @@ export async function POST(request: Request) {
     ok: true,
     swipeCount: total,
     personalityReady,
-    newMatches,
+    archetype: archetypePayload,
+    bestMatch,
+    newMatches: bestMatch
+      ? [
+          {
+            peerId: bestMatch.peerId,
+            score: bestMatch.score,
+            peerEmail: bestMatch.peerEmail,
+            matchId: bestMatch.matchId,
+          },
+        ]
+      : [],
   });
 }

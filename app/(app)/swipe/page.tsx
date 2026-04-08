@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import confetti from "canvas-confetti";
@@ -13,10 +13,27 @@ import { SWIPES_FOR_PROFILE } from "@/lib/matching";
 import { Sparkles } from "lucide-react";
 import { useSwipeKeyboard } from "@/hooks/useSwipeKeyboard";
 
+type ArchetypeDto = {
+  title: string;
+  shareLine: string;
+  description: string;
+};
+
 type ProfileUser = {
   id: string;
   swipe_count: number;
   personality_vector: Record<string, number>;
+  archetype: ArchetypeDto | null;
+};
+
+type BestMatchDto = {
+  peerId: string;
+  score: number;
+  peerEmail?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
+  age?: number | null;
+  matchId: string;
 };
 
 async function fetchMemes(): Promise<MemeItem[]> {
@@ -29,7 +46,9 @@ async function fetchMemes(): Promise<MemeItem[]> {
 async function fetchProfile(): Promise<ProfileUser> {
   const res = await fetch("/api/profile");
   if (!res.ok) throw new Error("Failed to load profile");
-  const data = (await res.json()) as { user: ProfileUser };
+  const data = (await res.json()) as {
+    user: ProfileUser & { archetype: ArchetypeDto | null };
+  };
   return data.user;
 }
 
@@ -39,7 +58,14 @@ export default function SwipePage() {
   const [busy, setBusy] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [matchOpen, setMatchOpen] = useState(false);
-  const [matchPeer, setMatchPeer] = useState<{ email?: string; score?: number }>({});
+  const [matchPeer, setMatchPeer] = useState<{
+    email?: string;
+    displayName?: string;
+    avatarUrl?: string | null;
+    age?: number | null;
+    score?: number;
+    matchId?: string;
+  }>({});
 
   const profileQuery = useQuery({
     queryKey: ["profile"],
@@ -85,13 +111,7 @@ export default function SwipePage() {
   const swipeCount = profileQuery.data?.swipe_count ?? 0;
   const progressPct = Math.min(100, (swipeCount / SWIPES_FOR_PROFILE) * 100);
 
-  const topTraits = useMemo(() => {
-    const v = profileQuery.data?.personality_vector ?? {};
-    return Object.entries(v)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([k]) => k.replace(/_/g, " "));
-  }, [profileQuery.data?.personality_vector]);
+  const archetype = profileQuery.data?.archetype;
 
   const dismissOnboarding = () => {
     localStorage.setItem("vibe_onboarding_seen", "1");
@@ -113,7 +133,7 @@ export default function SwipePage() {
         });
         const data = (await res.json()) as {
           ok?: boolean;
-          newMatches?: { peerId: string; score: number; peerEmail?: string }[];
+          bestMatch?: BestMatchDto | null;
           error?: string;
         };
         if (!res.ok) {
@@ -122,16 +142,22 @@ export default function SwipePage() {
         }
         await qc.invalidateQueries({ queryKey: ["profile"] });
 
-        const nm = data.newMatches ?? [];
-        if (nm.length > 0) {
-          const first = nm[0]!;
+        const bm = data.bestMatch;
+        if (bm) {
           const confettiKey = `vibe_confetti_${profileQuery.data?.id ?? "u"}`;
           const already = localStorage.getItem(confettiKey);
           if (!already) {
             confetti({ particleCount: 120, spread: 80, origin: { y: 0.65 } });
             localStorage.setItem(confettiKey, "1");
           }
-          setMatchPeer({ email: first.peerEmail, score: first.score });
+          setMatchPeer({
+            email: bm.peerEmail,
+            displayName: bm.displayName,
+            avatarUrl: bm.avatarUrl,
+            age: bm.age ?? undefined,
+            score: bm.score,
+            matchId: bm.matchId,
+          });
           setMatchOpen(true);
         }
       } finally {
@@ -152,8 +178,8 @@ export default function SwipePage() {
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-bold tracking-tight">Find your meme twin</h1>
             <p className="text-white/55">
-              Swipe memes to discover your vibe personality. After {SWIPES_FOR_PROFILE} swipes we
-              unlock your profile and start matching.
+              Swipe memes to discover your vibe archetype. After {SWIPES_FOR_PROFILE} swipes we
+              match you with your closest opposite-gender vibe from our pool.
             </p>
           </div>
 
@@ -164,7 +190,7 @@ export default function SwipePage() {
                 Progress to first match
               </CardTitle>
               <CardDescription>
-                {swipeCount} / {SWIPES_FOR_PROFILE} swipes · vector updates after{" "}
+                {swipeCount} / {SWIPES_FOR_PROFILE} swipes · archetype + match unlock at{" "}
                 {SWIPES_FOR_PROFILE}
               </CardDescription>
             </CardHeader>
@@ -215,25 +241,25 @@ export default function SwipePage() {
         <div className="space-y-4">
           <Card className="glass-panel">
             <CardHeader>
-              <CardTitle className="text-lg">Your vibe traits</CardTitle>
-              <CardDescription>Top signals from tags you engage with.</CardDescription>
+              <CardTitle className="text-lg">Vibe archetype</CardTitle>
+              <CardDescription>
+                Instead of matching only by similarity, you get a shareable meme personality — then
+                we pair you with opposite-gender vibes.
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-2">
-              {topTraits.length === 0 ? (
+            <CardContent className="space-y-3">
+              {!archetype ? (
                 <p className="text-sm text-white/45">
-                  Keep swiping — traits appear after your vector builds.
+                  Keep swiping — your archetype appears once your taste vector unlocks.
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {topTraits.map((t) => (
-                    <li
-                      key={t}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm capitalize text-white/85"
-                    >
-                      {t}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <p className="text-2xl font-bold tracking-tight text-transparent bg-gradient-to-r from-violet-200 to-cyan-200 bg-clip-text">
+                    {archetype.title}
+                  </p>
+                  <p className="text-sm font-medium text-violet-200/90">{archetype.shareLine}</p>
+                  <p className="text-sm leading-relaxed text-white/55">{archetype.description}</p>
+                </>
               )}
             </CardContent>
           </Card>
@@ -244,10 +270,11 @@ export default function SwipePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
           <Card className="glass-panel max-w-md border-violet-500/30">
             <CardHeader>
-              <CardTitle>Swipe memes to discover your vibe personality.</CardTitle>
+              <CardTitle>Swipe memes to discover your vibe archetype.</CardTitle>
               <CardDescription>
-                We never ask for your phone number. Your taste becomes a playful vector — then we
-                match you with opposite-gender users above a similarity threshold.
+                We never ask for your phone number. You’ll see a fun archetype (Chaos Goblin,
+                Wholesome Bean, and more) — built for screenshots and shareability — then we match
+                you with opposite-gender vibes.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -267,7 +294,11 @@ export default function SwipePage() {
         open={matchOpen}
         onOpenChange={setMatchOpen}
         peerEmail={matchPeer.email}
+        displayName={matchPeer.displayName}
+        avatarUrl={matchPeer.avatarUrl}
+        age={matchPeer.age}
         score={matchPeer.score}
+        matchId={matchPeer.matchId}
       />
     </div>
   );

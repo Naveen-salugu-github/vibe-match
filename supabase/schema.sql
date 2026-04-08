@@ -8,9 +8,16 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE IF NOT EXISTS public.users (
   id UUID PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   email TEXT NOT NULL,
-  gender TEXT NOT NULL DEFAULT 'other' CHECK (gender IN ('male', 'female', 'other')),
+  gender TEXT NOT NULL DEFAULT 'male' CHECK (gender IN ('male', 'female', 'other')),
   personality_vector JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  avatar_url TEXT,
+  age INTEGER,
+  display_name TEXT,
+  profile_completed BOOLEAN NOT NULL DEFAULT false,
+  is_demo_profile BOOLEAN NOT NULL DEFAULT false,
+  archetype TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (age IS NULL OR age >= 18)
 );
 
 CREATE INDEX IF NOT EXISTS users_gender_idx ON public.users (gender);
@@ -68,11 +75,12 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  INSERT INTO public.users (id, email, gender)
+  INSERT INTO public.users (id, email, gender, profile_completed)
   VALUES (
     NEW.id,
     COALESCE(NEW.email, ''),
-    COALESCE(NEW.raw_user_meta_data->>'gender', 'other')
+    COALESCE(NEW.raw_user_meta_data->>'gender', 'male'),
+    false
   );
   RETURN NEW;
 END;
@@ -138,3 +146,33 @@ CREATE POLICY "messages_insert_participant" ON public.messages FOR INSERT
 -- Realtime: in Supabase Dashboard → Database → Replication, enable `messages` for `supabase_realtime`,
 -- or run (may require owner privileges):
 -- ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+
+-- Avatars (profile photos)
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Public read avatars" ON storage.objects;
+CREATE POLICY "Public read avatars" ON storage.objects FOR SELECT
+  USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Users upload own avatar" ON storage.objects;
+CREATE POLICY "Users upload own avatar" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'avatars'
+    AND split_part(name, '/', 1) = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "Users update own avatar" ON storage.objects;
+CREATE POLICY "Users update own avatar" ON storage.objects FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'avatars'
+    AND split_part(name, '/', 1) = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "Users delete own avatar" ON storage.objects;
+CREATE POLICY "Users delete own avatar" ON storage.objects FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'avatars'
+    AND split_part(name, '/', 1) = auth.uid()::text
+  );

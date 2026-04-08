@@ -8,28 +8,42 @@ import {
   type PersonalityVector,
 } from "@/lib/matching";
 
-export async function findAndInsertMatches(
+export type BestMatchResult = {
+  peerId: string;
+  score: number;
+  matchId: string;
+};
+
+/**
+ * Real users only match **opposite-gender demo profiles** (`is_demo_profile = true`).
+ * Picks the single best cosine match; prefers scores ≥ threshold, otherwise still returns the best available.
+ */
+export async function findBestDemoMatchAndInsert(
   userId: string,
   gender: Gender,
   vector: PersonalityVector
-): Promise<{ newMatches: { peerId: string; score: number }[] }> {
+): Promise<BestMatchResult | null> {
   const supabase = createServiceClient();
   const keys = Object.keys(vector);
-  if (keys.length === 0) return { newMatches: [] };
+  if (keys.length === 0) return null;
 
-  const { data: others, error } = await supabase
-    .from("users")
-    .select("id, gender, personality_vector")
-    .neq("id", userId);
-
-  if (error || !others) {
-    console.error("findAndInsertMatches fetch", error);
-    return { newMatches: [] };
+  if (gender !== "male" && gender !== "female") {
+    return null;
   }
 
-  const newMatches: { peerId: string; score: number }[] = [];
+  const { data: demos, error } = await supabase
+    .from("users")
+    .select("id, gender, personality_vector")
+    .eq("is_demo_profile", true)
+    .neq("id", userId);
 
-  for (const row of others) {
+  if (error || !demos?.length) {
+    console.error("findBestDemoMatchAndInsert fetch", error);
+    return null;
+  }
+
+  const candidates: { id: string; score: number }[] = [];
+  for (const row of demos) {
     const g = row.gender as Gender;
     if (!canMatchGenders(gender, g)) continue;
 
@@ -37,28 +51,42 @@ export async function findAndInsertMatches(
     if (Object.keys(pv).length === 0) continue;
 
     const score = cosineSimilarity(vector, pv);
-    if (score < MATCH_SIMILARITY_THRESHOLD) continue;
-
-    const [u1, u2] = orderedPair(userId, row.id);
-    const { data: existing } = await supabase
-      .from("matches")
-      .select("id")
-      .eq("user1_id", u1)
-      .eq("user2_id", u2)
-      .maybeSingle();
-
-    if (existing) continue;
-
-    const { error: insErr } = await supabase.from("matches").insert({
-      user1_id: u1,
-      user2_id: u2,
-      compatibility_score: score,
-    });
-
-    if (!insErr) {
-      newMatches.push({ peerId: row.id, score });
-    }
+    candidates.push({ id: row.id, score });
   }
 
-  return { newMatches };
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => b.score - a.score);
+  const above = candidates.filter((c) => c.score >= MATCH_SIMILARITY_THRESHOLD);
+  const best = (above.length > 0 ? above[0] : candidates[0])!;
+
+  const [u1, u2] = orderedPair(userId, best.id);
+
+  const { data: existing } = await supabase
+    .from("matches")
+    .select("id, compatibility_score")
+    .eq("user1_id", u1)
+    .eq("user2_id", u2)
+    .maybeSingle();
+
+  if (existing) {
+    return { peerId: best.id, score: existing.compatibility_score, matchId: existing.id };
+  }
+
+  const { data: inserted, error: insErr } = await supabase
+    .from("matches")
+    .insert({
+      user1_id: u1,
+      user2_id: u2,
+      compatibility_score: best.score,
+    })
+    .select("id")
+    .single();
+
+  if (insErr || !inserted) {
+    console.error("findBestDemoMatchAndInsert insert", insErr);
+    return null;
+  }
+
+  return { peerId: best.id, score: best.score, matchId: inserted.id };
 }

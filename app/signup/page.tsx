@@ -13,7 +13,7 @@ export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [gender, setGender] = useState<"male" | "female" | "other">("male");
+  const [gender, setGender] = useState<"male" | "female">("male");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +27,7 @@ export default function SignupPage() {
       password,
       options: {
         data: { gender },
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=/swipe`,
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=/onboarding/profile`,
       },
     });
     setLoading(false);
@@ -35,7 +35,7 @@ export default function SignupPage() {
       setError(err.message);
       return;
     }
-    router.push("/swipe");
+    router.push("/onboarding/profile");
     router.refresh();
   }
 
@@ -47,7 +47,8 @@ export default function SignupPage() {
           <CardHeader>
             <CardTitle className="text-2xl">Create your vibe</CardTitle>
             <CardDescription>
-              Email + password. Pick gender for matching — we keep it minimal.
+              Email + password. Pick gender for opposite-gender matching — then add a photo on the
+              next step.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -76,9 +77,9 @@ export default function SignupPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Gender (for opposite-gender matching)</Label>
+                <Label>Gender</Label>
                 <div className="flex gap-2">
-                  {(["male", "female", "other"] as const).map((g) => (
+                  {(["male", "female"] as const).map((g) => (
                     <button
                       key={g}
                       type="button"
@@ -96,7 +97,7 @@ export default function SignupPage() {
               </div>
               {error && <p className="text-sm text-rose-300">{error}</p>}
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Creating…" : "Sign up & start swiping"}
+                {loading ? "Creating…" : "Continue"}
               </Button>
             </form>
             <p className="mt-4 text-center text-sm text-white/50">

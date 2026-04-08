@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles } from "lucide-react";
+import { MessageCircle, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,17 +11,31 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 
 type MatchRevealProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   peerEmail?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
+  age?: number | null;
   score?: number;
+  matchId?: string;
 };
 
-export function MatchReveal({ open, onOpenChange, peerEmail, score }: MatchRevealProps) {
-  const initial = peerEmail?.charAt(0).toUpperCase() ?? "?";
+export function MatchReveal({
+  open,
+  onOpenChange,
+  peerEmail,
+  displayName,
+  avatarUrl,
+  age,
+  score,
+  matchId,
+}: MatchRevealProps) {
+  const label = displayName?.trim() || (peerEmail ? maskEmail(peerEmail) : "Your match");
+  const initial = label.charAt(0).toUpperCase();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -28,10 +44,10 @@ export function MatchReveal({ open, onOpenChange, peerEmail, score }: MatchRevea
         <DialogHeader className="relative z-10">
           <DialogTitle className="flex items-center justify-center gap-2 text-center text-2xl">
             <Sparkles className="h-7 w-7 text-amber-300" />
-            New vibe unlocked
+            Closest vibe match
           </DialogTitle>
           <DialogDescription className="text-center text-base">
-            You matched with someone who shares your meme brain — almost eerily so.
+            Opposite-gender match from our vibe pool — open chat when you&apos;re ready.
           </DialogDescription>
         </DialogHeader>
         <AnimatePresence>
@@ -41,7 +57,7 @@ export function MatchReveal({ open, onOpenChange, peerEmail, score }: MatchRevea
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               transition={{ type: "spring", damping: 18, stiffness: 220 }}
-              className="relative z-10 flex flex-col items-center gap-6 py-4"
+              className="relative z-10 flex flex-col items-center gap-5 py-4"
             >
               <div className="relative">
                 <motion.div
@@ -49,20 +65,50 @@ export function MatchReveal({ open, onOpenChange, peerEmail, score }: MatchRevea
                   animate={{ opacity: [0.45, 0.75, 0.45] }}
                   transition={{ duration: 2.5, repeat: Infinity }}
                 />
-                <Avatar className="relative h-28 w-28 rounded-[2rem] border-2 border-white/30 shadow-2xl">
-                  <AvatarFallback className="rounded-[2rem] text-3xl">{initial}</AvatarFallback>
-                </Avatar>
+                <div className="relative h-32 w-32 overflow-hidden rounded-[2rem] border-2 border-white/30 shadow-2xl">
+                  {avatarUrl ? (
+                    <Image
+                      src={avatarUrl}
+                      alt=""
+                      fill
+                      className="object-cover"
+                      sizes="128px"
+                      unoptimized={
+                        avatarUrl.includes("randomuser.me") ||
+                        avatarUrl.includes("pravatar") ||
+                        avatarUrl.includes("picsum") ||
+                        avatarUrl.includes("supabase.co")
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-violet-600/80 to-cyan-500/60 text-3xl font-semibold text-white">
+                      {initial}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="text-center">
-                <p className="text-lg font-medium text-white/90">
-                  {peerEmail ? maskEmail(peerEmail) : "Your match"}
-                </p>
+                <p className="text-xl font-semibold text-white/95">{label}</p>
+                {age != null && (
+                  <p className="mt-0.5 text-sm text-white/50">{age} years old</p>
+                )}
+                {peerEmail && (
+                  <p className="mt-1 text-sm text-white/45">{maskEmail(peerEmail)}</p>
+                )}
                 {score != null && (
-                  <p className="mt-1 text-sm text-violet-200/80">
-                    Compatibility · {(score * 100).toFixed(0)}%
+                  <p className="mt-2 text-sm text-violet-200/90">
+                    Meme-taste overlap · {(score * 100).toFixed(0)}%
                   </p>
                 )}
               </div>
+              {matchId && (
+                <Button asChild className="gap-2 rounded-2xl px-8" size="lg">
+                  <Link href={`/chat/${matchId}`} onClick={() => onOpenChange(false)}>
+                    <MessageCircle className="h-5 w-5" />
+                    Text this person
+                  </Link>
+                </Button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

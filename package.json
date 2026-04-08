@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker:ingest": "node workers/meme-ingest.mjs"
+    "worker:ingest": "node workers/meme-ingest.mjs",
+    "seed:demo": "node scripts/seed-demo-users.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",

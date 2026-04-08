@@ -6,6 +6,7 @@ const nextConfig = {
       { protocol: "https", hostname: "**.redd.it", pathname: "/**" },
       { protocol: "https", hostname: "i.imgur.com", pathname: "/**" },
       { protocol: "https", hostname: "picsum.photos", pathname: "/**" },
+      { protocol: "https", hostname: "randomuser.me", pathname: "/api/portraits/**" },
       { protocol: "https", hostname: "**.supabase.co", pathname: "/storage/v1/object/public/**" },
     ],
   },

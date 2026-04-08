@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -33,21 +34,51 @@ export default async function ChatPage({ params }: PageProps) {
 
   const peerId = match.user1_id === user.id ? match.user2_id : match.user1_id;
   const svc = createServiceClient();
-  const { data: peer } = await svc.from("users").select("email").eq("id", peerId).single();
+  const { data: peer } = await svc
+    .from("users")
+    .select("email, display_name, avatar_url, age")
+    .eq("id", peerId)
+    .single();
 
   const initial: ChatMessage[] = (messages ?? []) as ChatMessage[];
+
+  const peerLabel =
+    peer?.display_name?.trim() ||
+    (peer?.email ? maskEmail(peer.email) : "Match");
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Button variant="ghost" asChild className="-ml-2 text-white/60">
-            <Link href="/matches">← Matches</Link>
-          </Button>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Chat · {maskEmail(peer?.email ?? "")}
-          </h1>
-          <p className="text-sm text-white/45">Realtime · filtered for safety</p>
+        <div className="flex items-start gap-4">
+          <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white/15">
+            {peer?.avatar_url ? (
+              <Image
+                src={peer.avatar_url}
+                alt=""
+                fill
+                className="object-cover"
+                sizes="56px"
+                unoptimized={
+                  peer.avatar_url.includes("randomuser.me") ||
+                  peer.avatar_url.includes("supabase.co")
+                }
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-white/10 text-lg font-semibold">
+                {peerLabel.charAt(0)}
+              </div>
+            )}
+          </div>
+          <div>
+            <Button variant="ghost" asChild className="-ml-2 h-auto text-white/60">
+              <Link href="/matches">← Matches</Link>
+            </Button>
+            <h1 className="text-2xl font-bold tracking-tight">Chat · {peerLabel}</h1>
+            {peer?.age != null && (
+              <p className="text-sm text-white/45">{peer.age} years old</p>
+            )}
+            <p className="text-sm text-white/45">Realtime · filtered for safety</p>
+          </div>
         </div>
       </div>
       <ChatInterface
