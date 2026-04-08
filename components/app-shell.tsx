@@ -34,10 +34,10 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
               Matches
             </Link>
             <Link
-              href="/admin/upload"
-              className="rounded-xl px-3 py-2 text-white/50 transition hover:bg-white/5 hover:text-white/80"
+              href="/inbox"
+              className="rounded-xl px-3 py-2 text-white/70 transition hover:bg-white/5 hover:text-white"
             >
-              Admin
+              Inbox
             </Link>
             {user ? (
               <form action="/auth/signout" method="post">

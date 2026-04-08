@@ -56,7 +56,8 @@ export default function SwipePage() {
   const qc = useQueryClient();
   const [stack, setStack] = useState<MemeItem[]>([]);
   const [busy, setBusy] = useState(false);
-  const [optimisticSwipeCount, setOptimisticSwipeCount] = useState<number | null>(null);
+  const [localSwipeCount, setLocalSwipeCount] = useState(0);
+  const [countHydrated, setCountHydrated] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [matchOpen, setMatchOpen] = useState(false);
   const [matchPeer, setMatchPeer] = useState<{
@@ -92,10 +93,16 @@ export default function SwipePage() {
   }, []);
 
   useEffect(() => {
-    if (profileQuery.data?.swipe_count != null && optimisticSwipeCount === null) {
-      setOptimisticSwipeCount(profileQuery.data.swipe_count);
+    if (profileQuery.data?.swipe_count == null) return;
+    const fromServer = profileQuery.data.swipe_count;
+    if (!countHydrated) {
+      setLocalSwipeCount(fromServer);
+      setCountHydrated(true);
+      return;
     }
-  }, [profileQuery.data?.swipe_count, optimisticSwipeCount]);
+    // Never jump backward visually; keep UI snappy and monotonic.
+    setLocalSwipeCount((prev) => Math.max(prev, fromServer));
+  }, [profileQuery.data?.swipe_count, countHydrated]);
 
   const refill = useCallback(async () => {
     const fresh = await qc.fetchQuery({ queryKey: ["memes-feed"], queryFn: fetchMemes });
@@ -115,9 +122,18 @@ export default function SwipePage() {
     }
   }, [stack.length, refill]);
 
-  const swipeCount =
-    optimisticSwipeCount ?? profileQuery.data?.swipe_count ?? 0;
-  const progressPct = Math.min(100, (swipeCount / SWIPES_FOR_PROFILE) * 100);
+  const swipeCount = localSwipeCount;
+  const progressPct =
+    swipeCount < SWIPES_FOR_PROFILE
+      ? Math.min(100, (swipeCount / SWIPES_FOR_PROFILE) * 100)
+      : (() => {
+          const inRound = swipeCount % SWIPES_FOR_PROFILE;
+          return inRound === 0 ? 100 : (inRound / SWIPES_FOR_PROFILE) * 100;
+        })();
+  const nextMilestone =
+    swipeCount < SWIPES_FOR_PROFILE
+      ? SWIPES_FOR_PROFILE
+      : (Math.floor(swipeCount / SWIPES_FOR_PROFILE) + 1) * SWIPES_FOR_PROFILE;
 
   const archetype = profileQuery.data?.archetype;
 
@@ -132,7 +148,7 @@ export default function SwipePage() {
       if (!meme || busy) return;
       const swipe_type = dir === "right" ? "like" : "dislike";
       setStack((s) => s.slice(1));
-      setOptimisticSwipeCount((prev) => (prev ?? profileQuery.data?.swipe_count ?? 0) + 1);
+      setLocalSwipeCount((prev) => prev + 1);
       setBusy(true);
       try {
         const res = await fetch("/api/swipe", {
@@ -144,17 +160,19 @@ export default function SwipePage() {
           ok?: boolean;
           swipeCount?: number;
           bestMatch?: BestMatchDto | null;
+          milestone?: number;
+          generatedMatch?: boolean;
           error?: string;
         };
         if (!res.ok) {
           console.error(data.error);
-          setOptimisticSwipeCount(profileQuery.data?.swipe_count ?? null);
+          setLocalSwipeCount((prev) => Math.max(0, prev - 1));
           return;
         }
         if (typeof data.swipeCount === "number") {
-          setOptimisticSwipeCount(data.swipeCount);
+          setLocalSwipeCount((prev) => Math.max(prev, data.swipeCount ?? 0));
         }
-        await qc.invalidateQueries({ queryKey: ["profile"] });
+        void qc.invalidateQueries({ queryKey: ["profile"] });
 
         const bm = data.bestMatch;
         if (bm) {
@@ -178,7 +196,7 @@ export default function SwipePage() {
         setBusy(false);
       }
     },
-    [stack, busy, qc, profileQuery.data?.id, profileQuery.data?.swipe_count]
+    [stack, busy, qc, profileQuery.data?.id]
   );
 
   useSwipeKeyboard((dir) => void handleSwipeDir(dir));
@@ -204,15 +222,16 @@ export default function SwipePage() {
                 Progress to first match
               </CardTitle>
               <CardDescription>
-                {swipeCount} / {SWIPES_FOR_PROFILE} swipes · archetype + match unlock at{" "}
-                {SWIPES_FOR_PROFILE}
+                {swipeCount} swipes · next refined match milestone at {nextMilestone}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               <Progress value={progressPct} />
               {swipeCount >= SWIPES_FOR_PROFILE && (
                 <p className="text-xs text-cyan-200/90">
-                  {busy ? "Looking for matches..." : "Looks for matches. Check Matches tab."}
+                  {busy
+                    ? "Looking for matches..."
+                    : "Looks for matches. Check Matches, or keep swiping to refine every +20."}
                 </p>
               )}
             </CardContent>
@@ -318,6 +337,9 @@ export default function SwipePage() {
         age={matchPeer.age}
         score={matchPeer.score}
         matchId={matchPeer.matchId}
+        onRefine={() => {
+          // user chose to continue swiping for a stronger future match
+        }}
       />
     </div>
   );

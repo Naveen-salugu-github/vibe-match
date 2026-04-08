@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 type MatchRevealProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onRefine?: () => void;
   peerEmail?: string;
   displayName?: string;
   avatarUrl?: string | null;
@@ -27,6 +28,7 @@ type MatchRevealProps = {
 export function MatchReveal({
   open,
   onOpenChange,
+  onRefine,
   peerEmail,
   displayName,
   avatarUrl,
@@ -101,14 +103,27 @@ export function MatchReveal({
                   </p>
                 )}
               </div>
-              {matchId && (
-                <Button asChild className="gap-2 rounded-2xl px-8" size="lg">
-                  <Link href={`/chat/${matchId}`} onClick={() => onOpenChange(false)}>
-                    <MessageCircle className="h-5 w-5" />
-                    Text this person
-                  </Link>
+              <div className="flex w-full flex-col gap-2 sm:flex-row">
+                {matchId && (
+                  <Button asChild className="w-full gap-2 rounded-2xl" size="lg">
+                    <Link href={`/chat/${matchId}`} onClick={() => onOpenChange(false)}>
+                      <MessageCircle className="h-5 w-5" />
+                      Text this person
+                    </Link>
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full rounded-2xl"
+                  onClick={() => {
+                    onRefine?.();
+                    onOpenChange(false);
+                  }}
+                >
+                  Refine with 20 more memes
                 </Button>
-              )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

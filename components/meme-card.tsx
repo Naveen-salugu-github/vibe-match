@@ -59,19 +59,22 @@ export function MemeCard({ meme, onSwipe, className, stackIndex = 0 }: MemeCardP
           "backdrop-blur-xl"
         )}
       >
-        <Image
-          src={meme.image_url}
-          alt="Meme"
-          fill
-          className="object-cover"
-          sizes="(max-width: 768px) 100vw, 28rem"
-          priority={stackIndex === 0}
-          unoptimized={
-            meme.image_url.includes("reddit") ||
-            meme.image_url.includes("imgur") ||
-            !meme.image_url.startsWith(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
-          }
-        />
+        <div className="absolute inset-0 bg-black/95" />
+        <div className="absolute inset-2 rounded-[1.6rem] bg-black">
+          <Image
+            src={meme.image_url}
+            alt="Meme"
+            fill
+            className="object-contain object-center"
+            sizes="(max-width: 768px) 100vw, 28rem"
+            priority={stackIndex === 0}
+            unoptimized={
+              meme.image_url.includes("reddit") ||
+              meme.image_url.includes("imgur") ||
+              !meme.image_url.startsWith(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")
+            }
+          />
+        </div>
         <div className="pointer-events-none absolute inset-0 rounded-[2rem] ring-1 ring-inset ring-white/10" />
         <motion.span
           style={{ opacity: likeOpacity }}

@@ -42,10 +42,21 @@ export async function findBestDemoMatchAndInsert(
     return null;
   }
 
+  const { data: existingMatches } = await supabase
+    .from("matches")
+    .select("user1_id, user2_id")
+    .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
+  const alreadyMatchedPeerIds = new Set<string>();
+  for (const m of existingMatches ?? []) {
+    alreadyMatchedPeerIds.add(m.user1_id === userId ? m.user2_id : m.user1_id);
+  }
+
   const candidates: { id: string; score: number }[] = [];
   for (const row of demos) {
     const g = row.gender as Gender;
     if (!canMatchGenders(gender, g)) continue;
+    if (alreadyMatchedPeerIds.has(row.id)) continue;
 
     const pv = (row.personality_vector ?? {}) as PersonalityVector;
     if (Object.keys(pv).length === 0) continue;

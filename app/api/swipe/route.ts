@@ -72,6 +72,21 @@ export async function POST(request: Request) {
     });
   }
 
+  const milestone = Math.floor(total / SWIPES_FOR_PROFILE);
+  const isMilestoneSwipe = total % SWIPES_FOR_PROFILE === 0;
+  if (!isMilestoneSwipe) {
+    return NextResponse.json({
+      ok: true,
+      swipeCount: total,
+      personalityReady: true,
+      archetype: null,
+      bestMatch: null,
+      newMatches: [],
+      milestone,
+      generatedMatch: false,
+    });
+  }
+
   const { data: swipeRows, error: swErr } = await supabase
     .from("swipes")
     .select("swipe_type, meme_id")
@@ -147,23 +162,30 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await findBestDemoMatchAndInsert(user.id, gender, vector);
-    if (result) {
-      const svc = createServiceClient();
-      const { data: peer } = await svc
-        .from("users")
-        .select("email, display_name, avatar_url, age")
-        .eq("id", result.peerId)
-        .single();
-      bestMatch = {
-        peerId: result.peerId,
-        score: result.score,
-        peerEmail: peer?.email,
-        displayName: peer?.display_name ?? undefined,
-        avatarUrl: peer?.avatar_url,
-        age: peer?.age,
-        matchId: result.matchId,
-      };
+    const { count: existingMatchCount } = await supabase
+      .from("matches")
+      .select("*", { count: "exact", head: true })
+      .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
+
+    if ((existingMatchCount ?? 0) < milestone) {
+      const result = await findBestDemoMatchAndInsert(user.id, gender, vector);
+      if (result) {
+        const svc = createServiceClient();
+        const { data: peer } = await svc
+          .from("users")
+          .select("email, display_name, avatar_url, age")
+          .eq("id", result.peerId)
+          .single();
+        bestMatch = {
+          peerId: result.peerId,
+          score: result.score,
+          peerEmail: peer?.email,
+          displayName: peer?.display_name ?? undefined,
+          avatarUrl: peer?.avatar_url,
+          age: peer?.age,
+          matchId: result.matchId,
+        };
+      }
     }
   } catch (e) {
     console.error("match pipeline", e);
@@ -175,6 +197,8 @@ export async function POST(request: Request) {
     personalityReady,
     archetype: archetypePayload,
     bestMatch,
+    milestone,
+    generatedMatch: !!bestMatch,
     newMatches: bestMatch
       ? [
           {
