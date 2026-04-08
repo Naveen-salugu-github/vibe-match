@@ -13,6 +13,8 @@ export default function OnboardingProfilePage() {
   const [gender, setGender] = useState<"male" | "female">("male");
   const [age, setAge] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +41,14 @@ export default function OnboardingProfilePage() {
       setError("Please add a profile photo.");
       return;
     }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
 
     setLoading(true);
     const supabase = createClient();
@@ -48,6 +58,13 @@ export default function OnboardingProfilePage() {
     if (!user) {
       setLoading(false);
       setError("Not signed in.");
+      return;
+    }
+
+    const { error: pwErr } = await supabase.auth.updateUser({ password });
+    if (pwErr) {
+      setLoading(false);
+      setError(pwErr.message);
       return;
     }
 
@@ -148,6 +165,30 @@ export default function OnboardingProfilePage() {
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="How you want to appear"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="pw">Create a password (for next time)</Label>
+                <Input
+                  id="pw"
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pw2">Confirm password</Label>
+                <Input
+                  id="pw2"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
                 />
               </div>
 

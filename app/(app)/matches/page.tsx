@@ -1,11 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MessageCircle } from "lucide-react";
+import { useState } from "react";
 
 type MatchRow = {
   id: string;
@@ -28,8 +29,36 @@ async function fetchMatches(): Promise<MatchRow[]> {
   return data.matches ?? [];
 }
 
+async function fetchProfile(): Promise<{ swipe_count: number }> {
+  const res = await fetch("/api/profile");
+  if (!res.ok) throw new Error("Failed to load profile");
+  const data = (await res.json()) as { user: { swipe_count: number } };
+  return { swipe_count: data.user.swipe_count ?? 0 };
+}
+
 export default function MatchesPage() {
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["matches"], queryFn: fetchMatches });
+  const prof = useQuery({ queryKey: ["profile-lite"], queryFn: fetchProfile });
+  const canGenerate = (prof.data?.swipe_count ?? 0) >= 20;
+  const [genErr, setGenErr] = useState<string | null>(null);
+  const [genBusy, setGenBusy] = useState(false);
+
+  async function generate() {
+    setGenErr(null);
+    setGenBusy(true);
+    try {
+      const res = await fetch("/api/match", { method: "POST" });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setGenErr(data.error ?? "Could not generate match");
+        return;
+      }
+      await qc.invalidateQueries({ queryKey: ["matches"] });
+    } finally {
+      setGenBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -100,6 +129,21 @@ export default function MatchesPage() {
               Complete 20 swipes to unlock your archetype and your closest opposite-gender vibe match.
             </CardDescription>
           </CardHeader>
+          <CardContent className="space-y-3">
+            {genErr && <p className="text-sm text-rose-300">{genErr}</p>}
+            <Button
+              type="button"
+              className="w-full"
+              onClick={() => void generate()}
+              disabled={!canGenerate || genBusy}
+            >
+              {genBusy
+                ? "Finding your vibe match…"
+                : canGenerate
+                  ? "Find my vibe match"
+                  : "Swipe 20 memes to unlock"}
+            </Button>
+          </CardContent>
         </Card>
       )}
     </div>
