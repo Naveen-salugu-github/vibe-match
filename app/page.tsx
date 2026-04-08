@@ -28,14 +28,14 @@ export default function LandingPage() {
               Privacy-first · No phone number
             </p>
             <h1 className="text-4xl font-extrabold leading-tight tracking-tight md:text-6xl md:leading-[1.05]">
-              Your meme DNA is unstable.
+              Swipe memes.
               <span className="block bg-gradient-to-r from-violet-300 via-fuchsia-300 to-cyan-300 bg-clip-text text-transparent">
-                Refine your chaos.
+                Find your same-vibe person.
               </span>
             </h1>
             <p className="max-w-xl text-lg text-white/60">
               Train your vibe engine with rapid meme swipes, unlock a collectible archetype, and
-              meet your next high-signal match.
+              connect with same-vibe partners who actually get your humor.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button size="lg" asChild className="rounded-2xl px-8">
@@ -66,7 +66,7 @@ export default function LandingPage() {
                 <p className="text-xs uppercase tracking-widest text-cyan-200/80">Match phase</p>
                 <p className="mt-1 text-lg font-semibold text-white">Closest match materializes</p>
                 <p className="mt-1 text-sm text-white/65">
-                  Text now, or refine with 20 more memes for a stronger next match.
+                  Connect with same-vibe partners now, or refine with 20 more memes for an even stronger next one.
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">

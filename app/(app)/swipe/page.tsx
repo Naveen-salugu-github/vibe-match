@@ -264,7 +264,7 @@ export default function SwipePage() {
     wrapText(ctx, archetype.description, 120, 490, 840, 46);
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.font = "28px Inter";
-    ctx.fillText("your meme dna is unstable • refine your chaos", 120, 1185);
+    ctx.fillText("swipe your humor • find your same-vibe person", 120, 1185);
 
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) return;
@@ -290,8 +290,8 @@ export default function SwipePage() {
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-bold tracking-tight">Find your meme twin</h1>
             <p className="text-white/55">
-              Your meme DNA is unstable. Calibrate your chaos, lock your archetype, and unlock your
-              next high-signal vibe.
+              Swipe your humor, lock your archetype, and connect with same-vibe partners who
+              actually get you.
             </p>
           </div>
 
@@ -315,7 +315,7 @@ export default function SwipePage() {
                 <p className="text-xs text-cyan-200/90">
                   {busy
                     ? "Looking for matches..."
-                    : "Looks for matches. Check Matches, or keep swiping to refine every +20."}
+                    : "Looks for same-vibe partners. Check Matches, or keep swiping to refine every +20."}
                 </p>
               )}
             </CardContent>
@@ -414,7 +414,7 @@ export default function SwipePage() {
               <CardDescription>
                 We never ask for your phone number. You’ll see a fun archetype (Chaos Goblin,
                 Wholesome Bean, and more) — built for screenshots and shareability — then we match
-                you with opposite-gender vibes.
+                you with opposite-gender, same-vibe partners.
               </CardDescription>
             </CardHeader>
             <CardContent>

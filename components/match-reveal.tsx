@@ -51,7 +51,7 @@ export function MatchReveal({
             Ritual complete: vibe locked
           </DialogTitle>
           <DialogDescription className="text-center text-base">
-            A high-signal opposite-vibe candidate surfaced from your meme DNA.
+            A same-vibe partner surfaced from your meme DNA — opposite-gender, high-signal, ready to chat.
           </DialogDescription>
         </DialogHeader>
         <AnimatePresence>
