@@ -41,6 +41,7 @@ export async function GET() {
       return {
         id: m.id,
         compatibility_score: m.compatibility_score,
+        presence: peerId.charCodeAt(0) % 2 === 0 ? "active_now" : "recently_active",
         peer: {
           id: peerId,
           display_name: peer?.display_name ?? null,
@@ -53,6 +54,7 @@ export async function GET() {
               content: lastMsg.content,
               created_at: lastMsg.created_at,
               mine: lastMsg.sender_id === user.id,
+              unread: lastMsg.sender_id !== user.id,
             }
           : null,
       };

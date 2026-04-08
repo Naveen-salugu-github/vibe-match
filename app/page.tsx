@@ -28,14 +28,14 @@ export default function LandingPage() {
               Privacy-first · No phone number
             </p>
             <h1 className="text-4xl font-extrabold leading-tight tracking-tight md:text-6xl md:leading-[1.05]">
-              Swipe memes.
+              Your meme DNA is unstable.
               <span className="block bg-gradient-to-r from-violet-300 via-fuchsia-300 to-cyan-300 bg-clip-text text-transparent">
-                Match the vibe.
+                Refine your chaos.
               </span>
             </h1>
             <p className="max-w-xl text-lg text-white/60">
-              Build a personality profile from what makes you laugh. We match you with people who
-              share your meme brain — opposite gender, high similarity, glossy chaos.
+              Train your vibe engine with rapid meme swipes, unlock a collectible archetype, and
+              meet your next high-signal match.
             </p>
             <div className="flex flex-wrap gap-3">
               <Button size="lg" asChild className="rounded-2xl px-8">
@@ -47,31 +47,31 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <Card className="glass-panel border-violet-500/20 shadow-2xl shadow-violet-950/50">
+          <Card className="premium-card border-violet-500/20 shadow-2xl shadow-violet-950/50">
             <CardHeader>
-              <CardTitle className="text-xl">Your vibe loop</CardTitle>
+              <CardTitle className="text-xl">The Vibe Engine</CardTitle>
               <CardDescription>
-                A sticky flow built for repeat sessions: swipe → archetype → match → replies.
+                One emotional loop: calibrate fast, reveal identity, then turn chemistry into replies.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-2xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
                 <p className="text-xs uppercase tracking-widest text-violet-200/80">After 20 swipes</p>
-                <p className="mt-1 text-lg font-semibold text-white">You unlock an archetype</p>
+                <p className="mt-1 text-lg font-semibold text-white">Collect your archetype card</p>
                 <p className="mt-1 text-sm text-white/65">
                   Chaos Goblin, Wholesome Bean, Soft Meme Lord, Dark Humor Wizard.
                 </p>
               </div>
               <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3">
                 <p className="text-xs uppercase tracking-widest text-cyan-200/80">Match phase</p>
-                <p className="mt-1 text-lg font-semibold text-white">Closest vibe appears instantly</p>
+                <p className="mt-1 text-lg font-semibold text-white">Closest match materializes</p>
                 <p className="mt-1 text-sm text-white/65">
                   Text now, or refine with 20 more memes for a stronger next match.
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                 <p className="text-xs uppercase tracking-widest text-white/55">Inbox</p>
-                <p className="mt-1 text-lg font-semibold text-white">All replies in one place</p>
+                <p className="mt-1 text-lg font-semibold text-white">Inbox keeps the loop alive</p>
                 <p className="mt-1 text-sm text-white/65">
                   Jump back into chats fast, with latest message previews.
                 </p>
@@ -98,7 +98,7 @@ export default function LandingPage() {
               body: "When you match, jump into a modern thread with typing hints and glass UI.",
             },
           ].map((item) => (
-            <Card key={item.title} className="glass-panel">
+            <Card key={item.title} className="premium-card">
               <CardHeader>
                 <item.icon className="h-8 w-8 text-cyan-300/90" />
                 <CardTitle className="text-lg">{item.title}</CardTitle>

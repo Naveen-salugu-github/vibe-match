@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import confetti from "canvas-confetti";
@@ -56,6 +56,9 @@ export default function SwipePage() {
   const qc = useQueryClient();
   const [stack, setStack] = useState<MemeItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [swipeFlash, setSwipeFlash] = useState<null | "left" | "right">(null);
+  const [streak, setStreak] = useState(1);
+  const [dropInMin, setDropInMin] = useState(30);
   const [localSwipeCount, setLocalSwipeCount] = useState(0);
   const [countHydrated, setCountHydrated] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -90,6 +93,28 @@ export default function SwipePage() {
     if (!seen) {
       setOnboardingOpen(true);
     }
+  }, []);
+
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const prev = localStorage.getItem("vibe_streak_day");
+    const value = Number(localStorage.getItem("vibe_streak_count") ?? "1");
+    if (prev !== today) {
+      const y = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const next = prev === y ? value + 1 : 1;
+      localStorage.setItem("vibe_streak_day", today);
+      localStorage.setItem("vibe_streak_count", String(next));
+      setStreak(next);
+    } else {
+      setStreak(value);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setDropInMin((m) => (m <= 1 ? 30 : m - 1));
+    }, 60_000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -134,8 +159,11 @@ export default function SwipePage() {
     swipeCount < SWIPES_FOR_PROFILE
       ? SWIPES_FOR_PROFILE
       : (Math.floor(swipeCount / SWIPES_FOR_PROFILE) + 1) * SWIPES_FOR_PROFILE;
-
-  const archetype = profileQuery.data?.archetype;
+  const phaseLabel = useMemo(() => {
+    const round = Math.floor(swipeCount / SWIPES_FOR_PROFILE) + 1;
+    if (round <= 1) return "Calibration 1";
+    return `Refinement ${round - 1}`;
+  }, [swipeCount]);
 
   const dismissOnboarding = () => {
     localStorage.setItem("vibe_onboarding_seen", "1");
@@ -149,6 +177,8 @@ export default function SwipePage() {
       const swipe_type = dir === "right" ? "like" : "dislike";
       setStack((s) => s.slice(1));
       setLocalSwipeCount((prev) => prev + 1);
+      setSwipeFlash(dir);
+      setTimeout(() => setSwipeFlash(null), 180);
       setBusy(true);
       try {
         const res = await fetch("/api/swipe", {
@@ -202,6 +232,56 @@ export default function SwipePage() {
   useSwipeKeyboard((dir) => void handleSwipeDir(dir));
 
   const visible = stack.slice(0, 3);
+  const archetype = profileQuery.data?.archetype;
+
+  const shareArchetype = useCallback(async () => {
+    if (!archetype) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1350;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const grad = ctx.createLinearGradient(0, 0, 1080, 1350);
+    grad.addColorStop(0, "#2c1450");
+    grad.addColorStop(1, "#0b0f19");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(64, 64, 952, 1222);
+    ctx.fillStyle = "#9ae6ff";
+    ctx.font = "bold 44px Inter";
+    ctx.fillText("VibeMatch Archetype", 120, 165);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 88px Inter";
+    ctx.fillText(archetype.title, 120, 320);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = "34px Inter";
+    ctx.fillText(archetype.shareLine, 120, 400);
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    ctx.font = "30px Inter";
+    wrapText(ctx, archetype.description, 120, 490, 840, 46);
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = "28px Inter";
+    ctx.fillText("your meme dna is unstable • refine your chaos", 120, 1185);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return;
+    const file = new File([blob], `vibe-${archetype.title.replace(/\s+/g, "-").toLowerCase()}.png`, {
+      type: "image/png",
+    });
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ title: `I'm ${archetype.title} on VibeMatch`, files: [file] });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [archetype]);
 
   return (
     <div className="space-y-8">
@@ -210,16 +290,16 @@ export default function SwipePage() {
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-bold tracking-tight">Find your meme twin</h1>
             <p className="text-white/55">
-              Swipe memes to discover your vibe archetype. After {SWIPES_FOR_PROFILE} swipes we
-              match you with your closest opposite-gender vibe from our pool.
+              Your meme DNA is unstable. Calibrate your chaos, lock your archetype, and unlock your
+              next high-signal vibe.
             </p>
           </div>
 
-          <Card className="glass-panel overflow-hidden">
+          <Card className="premium-card overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Sparkles className="h-5 w-5 text-violet-300" />
-                Progress to first match
+                {phaseLabel}
               </CardTitle>
               <CardDescription>
                 {swipeCount} swipes · next refined match milestone at {nextMilestone}
@@ -227,6 +307,10 @@ export default function SwipePage() {
             </CardHeader>
             <CardContent className="space-y-2">
               <Progress value={progressPct} />
+              <div className="flex items-center justify-between text-[11px] text-white/60">
+                <span>Daily streak: {streak} day{streak > 1 ? "s" : ""}</span>
+                <span>New meme drop in ~{dropInMin}m</span>
+              </div>
               {swipeCount >= SWIPES_FOR_PROFILE && (
                 <p className="text-xs text-cyan-200/90">
                   {busy
@@ -258,6 +342,18 @@ export default function SwipePage() {
                 </motion.div>
               ))}
             </AnimatePresence>
+            {swipeFlash && (
+              <motion.div
+                key={swipeFlash}
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 0.92, scale: 1.06 }}
+                exit={{ opacity: 0, scale: 1.14 }}
+                transition={{ duration: 0.2 }}
+                className={`pointer-events-none absolute inset-0 rounded-[2rem] ${
+                  swipeFlash === "right" ? "bg-emerald-400/20" : "bg-rose-400/20"
+                }`}
+              />
+            )}
             {!memesQuery.isLoading && stack.length === 0 && (
               <p className="text-center text-white/50">
                 You&apos;re all caught up — check back after more memes drop.
@@ -277,12 +373,11 @@ export default function SwipePage() {
         </div>
 
         <div className="space-y-4">
-          <Card className="glass-panel">
+          <Card className="premium-card">
             <CardHeader>
               <CardTitle className="text-lg">Vibe archetype</CardTitle>
               <CardDescription>
-                Instead of matching only by similarity, you get a shareable meme personality — then
-                we pair you with opposite-gender vibes.
+                Your collectible meme identity card. Share it, then refine for stronger chemistry.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -297,6 +392,13 @@ export default function SwipePage() {
                   </p>
                   <p className="text-sm font-medium text-violet-200/90">{archetype.shareLine}</p>
                   <p className="text-sm leading-relaxed text-white/55">{archetype.description}</p>
+                  <button
+                    type="button"
+                    onClick={() => void shareArchetype()}
+                    className="mt-1 rounded-xl border border-cyan-400/40 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-500/20"
+                  >
+                    Share archetype card
+                  </button>
                 </>
               )}
             </CardContent>
@@ -343,4 +445,28 @@ export default function SwipePage() {
       />
     </div>
   );
+}
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number
+) {
+  const words = text.split(" ");
+  let line = "";
+  let cy = y;
+  for (const word of words) {
+    const test = `${line}${word} `;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, cy);
+      line = `${word} `;
+      cy += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, cy);
 }

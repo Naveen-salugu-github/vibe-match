@@ -150,8 +150,8 @@ export function ChatInterface({
         </div>
       </ScrollArea>
       {warn && (
-        <p className="mx-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-          {warn}
+        <p className="mx-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          Heads up: for everyone&apos;s safety we keep contact details off-platform. {warn}
         </p>
       )}
       <div className="flex items-center gap-2 border-t border-white/10 p-3">
@@ -177,7 +177,7 @@ export function ChatInterface({
         </Button>
       </div>
       <p className="px-4 pb-3 text-center text-[11px] text-violet-200/80">
-        {peerTyping ? "Match is typing…" : "\u00a0"}
+        {peerTyping ? "Match is typing…" : "Trust layer on: contact details are auto-filtered."}
       </p>
     </div>
   );

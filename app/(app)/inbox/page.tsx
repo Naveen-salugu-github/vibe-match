@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 type InboxRow = {
   id: string;
   compatibility_score: number;
+  presence: "active_now" | "recently_active";
   peer: {
     id: string;
     display_name: string | null;
@@ -20,6 +21,7 @@ type InboxRow = {
     content: string;
     created_at: string;
     mine: boolean;
+    unread: boolean;
   } | null;
 };
 
@@ -32,12 +34,22 @@ async function fetchInbox(): Promise<InboxRow[]> {
 
 export default function InboxPage() {
   const q = useQuery({ queryKey: ["inbox"], queryFn: fetchInbox });
+  const unreadReplies = (q.data ?? []).filter((r) => r.last_message?.unread).length;
+  const pendingPings = (q.data ?? []).filter((r) => !r.last_message).length;
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Inbox</h1>
-        <p className="text-white/55">See your matched chats and latest replies.</p>
+        <p className="text-white/55">Signal center for your vibe replies.</p>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-2.5 py-1 text-cyan-100">
+            {unreadReplies} unread reply{unreadReplies === 1 ? "" : "ies"}
+          </span>
+          <span className="rounded-xl border border-violet-400/35 bg-violet-500/10 px-2.5 py-1 text-violet-100">
+            {pendingPings} pending ping{pendingPings === 1 ? "" : "s"}
+          </span>
+        </div>
       </div>
 
       {q.isLoading && <p className="text-white/50">Loading…</p>}
@@ -47,7 +59,7 @@ export default function InboxPage() {
         {(q.data ?? []).map((row) => {
           const name = row.peer.display_name?.trim() || maskEmail(row.peer.email);
           return (
-            <Card key={row.id} className="glass-panel">
+            <Card key={row.id} className="premium-card">
               <CardHeader className="flex flex-row items-start gap-4 pb-3">
                 <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white/15">
                   {row.peer.avatar_url ? (
@@ -69,10 +81,16 @@ export default function InboxPage() {
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <CardTitle className="text-lg">{name}</CardTitle>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    {name}
+                    {row.last_message?.unread && (
+                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                    )}
+                  </CardTitle>
                   <CardDescription>
                     {(row.compatibility_score * 100).toFixed(0)}% overlap
                     {row.peer.age != null ? ` · ${row.peer.age} yrs` : ""}
+                    {row.presence === "active_now" ? " · Active now" : " · Recently active"}
                   </CardDescription>
                 </div>
               </CardHeader>
@@ -80,7 +98,7 @@ export default function InboxPage() {
                 <p className="line-clamp-1 text-sm text-white/60">
                   {row.last_message
                     ? `${row.last_message.mine ? "You: " : ""}${row.last_message.content}`
-                    : "No messages yet. Say hi 👋"}
+                    : "No messages yet. Your vibe ping is waiting."}
                 </p>
                 <Button asChild variant="secondary" size="sm">
                   <Link href={`/chat/${row.id}`}>Open</Link>

@@ -38,18 +38,20 @@ export function MatchReveal({
 }: MatchRevealProps) {
   const label = displayName?.trim() || (peerEmail ? maskEmail(peerEmail) : "Your match");
   const initial = label.charAt(0).toUpperCase();
+  const confidence =
+    score == null ? "Unknown" : score >= 0.82 ? "High" : score >= 0.68 ? "Medium" : "Exploratory";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md overflow-hidden border-violet-500/30">
+      <DialogContent className="max-w-md overflow-hidden border-violet-500/30 premium-card">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(139,92,246,0.35),_transparent_55%)]" />
         <DialogHeader className="relative z-10">
           <DialogTitle className="flex items-center justify-center gap-2 text-center text-2xl">
             <Sparkles className="h-7 w-7 text-amber-300" />
-            Closest vibe match
+            Ritual complete: vibe locked
           </DialogTitle>
           <DialogDescription className="text-center text-base">
-            Opposite-gender match from our vibe pool — open chat when you&apos;re ready.
+            A high-signal opposite-vibe candidate surfaced from your meme DNA.
           </DialogDescription>
         </DialogHeader>
         <AnimatePresence>
@@ -102,6 +104,7 @@ export function MatchReveal({
                     Meme-taste overlap · {(score * 100).toFixed(0)}%
                   </p>
                 )}
+                <p className="mt-1 text-xs text-white/55">Match confidence: {confidence}</p>
               </div>
               <div className="flex w-full flex-col gap-2 sm:flex-row">
                 {matchId && (
