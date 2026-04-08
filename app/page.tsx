@@ -49,17 +49,32 @@ export default function LandingPage() {
 
           <Card className="glass-panel border-violet-500/20 shadow-2xl shadow-violet-950/50">
             <CardHeader>
-              <CardTitle className="text-xl">Liquid glass deck</CardTitle>
+              <CardTitle className="text-xl">Your vibe loop</CardTitle>
               <CardDescription>
-                Full-screen cards, neon glow, 60fps swipes — tuned for thumb-stopping sessions.
+                A sticky flow built for repeat sessions: swipe → archetype → match → replies.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="aspect-[4/5] w-full rounded-[1.75rem] border border-white/10 bg-gradient-to-br from-white/10 to-transparent p-4 shadow-inner">
-                <div className="flex h-full flex-col justify-between rounded-2xl border border-dashed border-white/15 p-4 text-sm text-white/40">
-                  <span>Your next meme loads here</span>
-                  <span className="text-right text-xs text-violet-300/80">→ like · ← pass</span>
-                </div>
+            <CardContent className="space-y-3">
+              <div className="rounded-2xl border border-violet-400/30 bg-violet-500/10 px-4 py-3">
+                <p className="text-xs uppercase tracking-widest text-violet-200/80">After 20 swipes</p>
+                <p className="mt-1 text-lg font-semibold text-white">You unlock an archetype</p>
+                <p className="mt-1 text-sm text-white/65">
+                  Chaos Goblin, Wholesome Bean, Soft Meme Lord, Dark Humor Wizard.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3">
+                <p className="text-xs uppercase tracking-widest text-cyan-200/80">Match phase</p>
+                <p className="mt-1 text-lg font-semibold text-white">Closest vibe appears instantly</p>
+                <p className="mt-1 text-sm text-white/65">
+                  Text now, or refine with 20 more memes for a stronger next match.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-widest text-white/55">Inbox</p>
+                <p className="mt-1 text-lg font-semibold text-white">All replies in one place</p>
+                <p className="mt-1 text-sm text-white/65">
+                  Jump back into chats fast, with latest message previews.
+                </p>
               </div>
             </CardContent>
           </Card>
