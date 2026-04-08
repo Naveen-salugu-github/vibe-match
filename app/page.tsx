@@ -16,11 +16,8 @@ export default function LandingPage() {
             VibeMatch
           </div>
           <div className="flex gap-2">
-            <Button variant="ghost" asChild>
-              <Link href="/auth/email">Continue with email code</Link>
-            </Button>
             <Button asChild>
-              <Link href="/auth/email">Get started</Link>
+              <Link href="/signup">Get started</Link>
             </Button>
           </div>
         </header>
@@ -42,10 +39,10 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-wrap gap-3">
               <Button size="lg" asChild className="rounded-2xl px-8">
-                <Link href="/auth/email">Continue with email code</Link>
+                <Link href="/signup">Get started</Link>
               </Button>
               <Button size="lg" variant="secondary" asChild className="rounded-2xl px-8">
-                <Link href="/auth/email">Continue with email code</Link>
+                <Link href="/login">Log in</Link>
               </Button>
             </div>
           </div>

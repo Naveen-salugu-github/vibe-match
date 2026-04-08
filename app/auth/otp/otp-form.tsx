@@ -140,7 +140,7 @@ export function OtpForm() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => router.push("/auth/email")}
+              onClick={() => router.push("/login")}
               disabled={loading}
             >
               Change email

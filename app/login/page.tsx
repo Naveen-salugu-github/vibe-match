@@ -1,16 +1,10 @@
+import { LoginOtp } from "./login-otp";
+
 export default function LoginPage() {
-  // Back-compat route: keep /login but route to OTP flow.
   return (
-    <div className="min-h-screen bg-[#0b0f19] px-4 py-16 text-white">
-      <div className="mx-auto w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-8 text-center">
-        <p className="text-white/70">Login now uses email codes.</p>
-        <a
-          href="/auth/email"
-          className="mt-4 inline-block rounded-2xl bg-gradient-to-r from-violet-600 to-cyan-500 px-6 py-3 text-sm font-semibold text-white"
-        >
-          Continue with email code
-        </a>
-      </div>
+    <div className="relative min-h-screen bg-[#0b0f19] px-4 py-16 text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(120,80,255,0.35),transparent)]" />
+      <LoginOtp />
     </div>
   );
 }
