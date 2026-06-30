@@ -1,0 +1,842 @@
+
+============================================================
+CELL 0 | markdown
+============================================================
+# Patient Journey 
+
+**Objective**: Create a patient level data table with diagnosis and treatment dates for each patient, along with closed claims enrollment and payer information used for patient journey analysis.
+
+**Output Table:** us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2
+
+============================================================
+CELL 1 | markdown
+============================================================
+## Imports and Variable Definition
+
+============================================================
+CELL 2 | code
+============================================================
+from pyspark.sql.functions import explode,min as min_,max as max_,least,col,when,coalesce,to_date,lit,datediff, greatest, sum as sum_, desc, coalesce, date_add, abs as abs_, collect_list, array_position, row_number, sort_array,struct,expr, array_intersect, size, array, to_date, isnull, regexp_replace, lower
+from pyspark.sql.window import Window
+from pyspark.sql.functions import udf, struct
+from pyspark.sql.types import ArrayType, StringType
+import datetime
+#Creating a threshold for sequencial acts. If actions happen within the number of days below of each other, we consider them as happening simultenously. For example, if a patient is diagnosed with CM today, and they are diagnosed with PN 2 months from now, we consider them as happening at the same time.
+within_same_period_threshold = 91
+
+============================================================
+CELL 3 | markdown
+============================================================
+## Additional Comorbidities analysis
+
+============================================================
+CELL 4 | code
+============================================================
+#Declaring initial files
+dx_codes_file = '/Volumes/us_commercial_catalog_prod/lgu_eplontersen/wainua_upload_samples/diag_code_patient_journey.csv'
+cpt_codes_file = '/Volumes/us_commercial_catalog_prod/lgu_eplontersen/wainua_upload_samples/cpt_codes_for_patient_journey.csv'
+ndc_codes_file = '/Volumes/us_commercial_catalog_prod/lgu_eplontersen/wainua_upload_samples/ndc_codes_for_patient_journey.csv'
+mx_table_ = 'us_commercial_catalog_prod.lg_claim.f_claim_mx_komodo_attr_v'
+rx_table_ = spark.sql(""" select * from us_commercial_catalog_prod.lg_claim.f_claim_phcy_komodo_attr_v
+where claim_dspn in ("PAID") and claim_sta in ("FINAL","STANDALONE") """)
+rx_table_.createOrReplaceTempView("rx_table_")
+
+#------------------------------------------------------------------------
+# Diagnosis Processing
+#Pulling the required diagnosis codes for the patient journey - excluding conditions already considered for ATTR pats
+req_diag_codes = spark.read.csv(dx_codes_file,header=True)\
+  .filter(~col('az_grouping_1').isin('ATTR','AFIB-HT','AL','CM','HF','Diabetic PN','General PN','Other PN','Carpal Tunnel','Biceps Tendon Rupture','OH','Spinal stenosis'))
+#Filtering the diagnosis data to the required diagnosis codes
+listed_dx_codes = [lit(row['dotted_diag_code']) for row in req_diag_codes.select('dotted_diag_code').collect()]
+
+raw_additional_dx_data = spark.table(mx_table_)\
+  .withColumn('matching_diag_cd',array_intersect(col("diag_cd_array"), array(*listed_dx_codes)))\
+    .filter((~isnull(col("matching_diag_cd"))) & (size(col("matching_diag_cd")) > 0))\
+      .withColumn('full_diag_cd',explode(col('matching_diag_cd')))\
+        .withColumn('hcp_az_cust_id',coalesce(col('refr_az_cust_id'),col('rndr_az_cust_id')))\
+          .join(req_diag_codes,req_diag_codes['dotted_diag_code'] == col('full_diag_cd'),how='inner')\
+            .select('claim_id','pat_id','srvc_dt','hcp_az_cust_id','full_diag_cd','az_grouping_1')
+
+#Storing the data in a permanent table for quicker access
+raw_additional_dx_data.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable('us_commercial_catalog_prod.lgu_eplontersen.additional_dx_data_pat_journey')
+
+#------------------------------------------------------------------------
+#CPT Processing
+req_cpt_codes = spark.read.csv(cpt_codes_file,header=True)
+
+raw_additional_procedure_data = spark.table(mx_table_)\
+  .join(req_cpt_codes,req_cpt_codes['cpt_code'] == col('prcr_cd'),how='inner')\
+    .withColumn('hcp_az_cust_id',coalesce(col('refr_az_cust_id'),col('rndr_az_cust_id')))\
+      .select('claim_id','pat_id','srvc_dt','hcp_az_cust_id','prcr_cd','group')
+
+raw_additional_procedure_data.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable('us_commercial_catalog_prod.lgu_eplontersen.additional_procedure_data_pat_journey')
+#------------------------------------------------------------------------
+#NDC Processing
+req_ndc_codes = spark.read.csv(ndc_codes_file,header=True)\
+  .withColumn('NDC_Code',regexp_replace(col('NDC_Code'),"-",""))
+
+#Mx treatments
+medical_treatment_data = spark.table(mx_table_)\
+  .join(req_ndc_codes,req_ndc_codes['NDC_Code'] == col('ndc_cd'),how='inner')\
+    .withColumn('hcp_az_cust_id',coalesce(col('refr_az_cust_id'),col('rndr_az_cust_id')))\
+      .select('claim_id','pat_id','srvc_dt','hcp_az_cust_id','ndc_cd','description')
+
+#rx Treatments
+pharmacy_treatments = rx_table_.join(req_ndc_codes,req_ndc_codes['NDC_Code'] == col('ndc_cd'),how='inner')\
+    .withColumn('hcp_az_cust_id',coalesce(col('psbr_az_cust_id'),col('prvdr_az_cust_id')))\
+      .select('claim_id','pat_id','srvc_dt','hcp_az_cust_id','ndc_cd','description')
+
+
+#Both together
+raw_additional_treatment_data = medical_treatment_data.union(pharmacy_treatments).dropDuplicates()
+
+#Storing the data in a permanent table for quicker access
+
+raw_additional_treatment_data.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable('us_commercial_catalog_prod.lgu_eplontersen.additional_treatment_data_pat_journey')
+#------------------------------------------------------------------------
+#Process to get to the desired state
+
+============================================================
+CELL 5 | code
+============================================================
+#Pull the data from the permanent tables
+dx_data = spark.table('us_commercial_catalog_prod.lgu_eplontersen.additional_dx_data_pat_journey')
+cpt_data = spark.table('us_commercial_catalog_prod.lgu_eplontersen.additional_procedure_data_pat_journey')
+ndc_data = spark.table('us_commercial_catalog_prod.lgu_eplontersen.additional_treatment_data_pat_journey')
+
+#Unioning the data 
+complete_add_data = dx_data.union(cpt_data).union(ndc_data)
+complete_add_data = complete_add_data.withColumn('az_grouping_1', lower(regexp_replace(col('az_grouping_1'),' ','_')))
+#Calculating Min max date by condition
+aggregated_add_data = complete_add_data.groupBy('pat_id').pivot('az_grouping_1').agg(min_(col('srvc_dt')).alias('first_service_date'))
+
+#Storing as a permanent table
+aggregated_add_data.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable('us_commercial_catalog_prod.lgu_eplontersen.additional_pat_journey_universe')
+
+
+============================================================
+CELL 6 | code
+============================================================
+%sql
+select * from aggregated_add_data
+
+============================================================
+CELL 7 | markdown
+============================================================
+## Diagnosed Patient Base
+
+============================================================
+CELL 8 | code
+============================================================
+# Create a Patient Universe - ATTR diagnosis patients + ATTR treated patients
+mx_pats = spark.table('us_commercial_catalog_prod.lgu_eplontersen.komodo_raw_diagnosis_ATTR')\
+  .withColumn('diag_desc_lvl1',lower(regexp_replace(col("diag_desc_lvl1"),' |-','_')))\
+    .select('pat_id','srvc_dt','diag_cd','diag_desc_lvl1','ATTR_Type','ATTR_Phenotypes')\
+      .distinct()
+
+============================================================
+CELL 9 | markdown
+============================================================
+## Patient level Diagnosis details
+
+============================================================
+CELL 10 | code
+============================================================
+## Diagnosis Code level pivot to get the hATTR diagnosis details
+## Updated for readability
+pivot_df = mx_pats.filter(col('diag_cd').isin(['E85.0', 'E85.1', 'E85.2', 'E85.82']))\
+  .withColumn('diag_cd',lower(regexp_replace(col('diag_cd'),"\\.","")))\
+    .groupBy("pat_id").pivot("diag_cd").agg(min_("srvc_dt").alias("min_service_date"))
+
+pivot_df = pivot_df.filter(~isnull(least(*[col(c) for c in pivot_df.columns if c != 'pat_id'])))
+
+============================================================
+CELL 11 | code
+============================================================
+## Diagnosis Description level pivot
+# Pivot the DataFrame
+pivot_df_diag_desc_lvl1 = mx_pats.groupBy("pat_id") \
+    .pivot('diag_desc_lvl1') \
+      .agg(min_("srvc_dt").alias("min_service_date"))
+
+============================================================
+CELL 12 | code
+============================================================
+##Join the description level data, additional diagnosis and hATTR diagnosis code level data
+added_data = spark.table('us_commercial_catalog_prod.lgu_eplontersen.additional_pat_journey_universe')
+
+diag_pivot_final = pivot_df_diag_desc_lvl1.join(pivot_df, on = 'pat_id', how='left')\
+  .join(added_data, on='pat_id',how = 'left')
+
+#Adopting standard naming conventions
+diag_pivot_final = diag_pivot_final.withColumn('dx_date_of_first_pn',least(col('e851'),col('dpn'),col('gpn')))\
+  .withColumn('dx_date_of_first_attr_cm',least(col('hf'),col('afib_ht'),col('cm')))\
+    .withColumn('dx_date_of_first_hattr',least(col('e850'),col('e851'),col('e852')))\
+      .withColumn('dx_date_of_first_wtattr',col('e8582'))
+
+#For all other columns 
+remaining_cols = [c for c in diag_pivot_final.columns if 'dx_date_' not in c and c != 'pat_id' and 'e8'not in c]
+for i in remaining_cols:
+  diag_pivot_final = diag_pivot_final.withColumnRenamed(i,f'dx_date_of_first_{i}')
+
+diag_pivot_final.createOrReplaceTempView("First_diag")
+
+============================================================
+CELL 13 | markdown
+============================================================
+## Required ATTR diagnosis columns
+
+============================================================
+CELL 14 | code
+============================================================
+## Final table with First diagnosis of ATTR patients including CM_Only,PN_Only and Mixed flag
+spark.sql(f"""
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.komodo_first_diag_final using delta as 
+select *,
+case 
+    when Dx_Date_of_First_ATTR_CM is not null and Dx_Date_of_first_PN is null then "CM_Only" 
+    when Dx_Date_of_First_ATTR_CM is null and Dx_Date_of_first_PN is not null then "PN_Only" 
+    when Dx_Date_of_First_ATTR_CM is not null and Dx_Date_of_first_PN is not null then "Mixed" else "Uncat" end as dx_final_phenotype,
+
+if(least(Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM)=Dx_Date_of_first_PN,'Yes','No') as dx_PN_First,
+
+case 
+    when abs(datediff(dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM)) < {within_same_period_threshold} then "Yes" 
+    else "No" end as dx_Close_Diagnosis
+
+from First_diag 
+""")
+
+============================================================
+CELL 15 | markdown
+============================================================
+### Fetching Treatment information for Patients
+
+============================================================
+CELL 16 | code
+============================================================
+#Treatment data from claims
+rx_base=spark.sql(""" select * from us_commercial_catalog_prod.lgu_eplontersen.komodo_raw_treatments_ATTR
+where claim_dspn in ("PAID") and claim_sta in ("FINAL","STANDALONE") """)
+rx_base.createOrReplaceTempView("rx_base")
+
+rx_base = rx_base.withColumn('prod_desc_lvl3',coalesce(col('prod_desc_lvl3'),when(col('proc_desc_lvl3').contains('AMVUTTRA'),lit('AMVUTTRA FAMILY')).otherwise(when(col('proc_desc_lvl3').contains('ONPATTRO'),lit('ONPATTRO FAMILY')))))
+
+rx_min_max_dates = rx_base.groupBy('pat_id','prod_desc_lvl3')\
+    .agg(min_('srvc_dt').alias('first_rx_date'),max_('srvc_dt').alias('recent_rx_date'))
+
+#Creating the sequence of Brands the HCP has prescribed
+w_ordered = Window.partitionBy('pat_id').orderBy('first_rx_date')
+ordered_set = rx_min_max_dates.withColumn("rank", row_number().over(w_ordered))
+
+ordered_set = ordered_set.withColumn('brand_with_order',struct('rank','prod_desc_lvl3'))
+new_pats = ordered_set.groupBy("pat_id") \
+     .agg(sort_array(collect_list("brand_with_order")).alias("sorted_brands"))
+     
+pats_rx_set = new_pats.withColumn("rx_treatment_array", expr("transform(sorted_brands, x -> x.prod_desc_lvl3)")).select("pat_id", "rx_treatment_array")
+
+# Creating the specific dates by brand
+stage1_rx = rx_min_max_dates.groupBy('pat_id').pivot('prod_desc_lvl3').agg(min_('first_rx_date').alias('first_rx_date'),min_('recent_rx_date').alias('recent_rx_date'))
+
+stage1_rx = stage1_rx.select([col(x).alias(x.replace(' ', '_')) for x in stage1_rx.columns])
+
+## Creating First Silencer Date and latest silencer date
+stage1_rx = stage1_rx.withColumn('SILENCER_first_rx_date',least(stage1_rx["AMVUTTRA_FAMILY_first_rx_date"], stage1_rx["ONPATTRO_FAMILY_first_rx_date"], stage1_rx["WAINUA_FAMILY_first_rx_date"])).withColumn('SILENCER_recent_rx_date',greatest(stage1_rx["AMVUTTRA_FAMILY_recent_rx_date"], stage1_rx["ONPATTRO_FAMILY_recent_rx_date"], stage1_rx["WAINUA_FAMILY_recent_rx_date"]))
+
+## Creating First Stabilizer Date and latest stabilizer date
+stage1_rx = stage1_rx.withColumn('STABILIZER_first_rx_date',least(stage1_rx["ATTRUBY_FAMILY_first_rx_date"], stage1_rx["VYNDAMAX_FAMILY_first_rx_date"]))\
+    .withColumn('STABILIZER_recent_rx_date',greatest(stage1_rx["ATTRUBY_FAMILY_recent_rx_date"], stage1_rx["VYNDAMAX_FAMILY_recent_rx_date"]))
+
+## Creating Treatment flag - Whether patient is treated with any of the 5 drugs
+stage1_rx = stage1_rx.withColumn('rx_treatment_flag',when(
+        (stage1_rx['SILENCER_first_rx_date'].isNotNull()) | 
+        (stage1_rx['STABILIZER_first_rx_date'].isNotNull()), 
+        'Yes').otherwise('No'))
+
+## Creating Silencer only flag
+stage1_rx = stage1_rx.withColumn(
+    'rx_silencer_only_flag',when((stage1_rx['SILENCER_first_rx_date'].isNotNull()) & 
+        (stage1_rx['STABILIZER_first_rx_date'].isNull()),'Yes').otherwise('No')
+)
+
+## Creating Stabilizer only flag
+stage1_rx = stage1_rx.withColumn(
+    'rx_stablizer_only_flag',when((stage1_rx['STABILIZER_first_rx_date'].isNotNull()) & 
+        (stage1_rx['SILENCER_first_rx_date'].isNull()),'Yes').otherwise('No')
+)
+
+## Creating First Treatment Date - Minimum of Silencer and Stabilizer
+stage1_rx = stage1_rx.withColumn('first_treatment_rx_date',least(stage1_rx["SILENCER_first_rx_date"], stage1_rx["STABILIZER_first_rx_date"]))
+
+
+## Creating First Treatment Column
+stage1_rx = stage1_rx.withColumn(
+    'first_treatment_rx',
+    when(
+        (stage1_rx['rx_treatment_flag'] == 'Yes') & 
+        (coalesce(date_add(stage1_rx['SILENCER_first_rx_date'], within_same_period_threshold), to_date(lit('2050-01-01'))) < coalesce(stage1_rx['STABILIZER_first_rx_date'], to_date(lit('2050-01-01')))),
+        'Silencer'
+    )
+    .when(
+        (stage1_rx['rx_treatment_flag'] == 'Yes') & 
+        (coalesce(stage1_rx['SILENCER_first_rx_date'], to_date(lit('2050-01-01'))) > coalesce(date_add(stage1_rx['STABILIZER_first_rx_date'],within_same_period_threshold), to_date(lit('2050-01-01')))),
+        'Stabilizer'
+    )
+    .when(
+        (stage1_rx['rx_treatment_flag'] == 'Yes') & 
+        (abs_(datediff(stage1_rx['SILENCER_first_rx_date'], stage1_rx['STABILIZER_first_rx_date']))<=within_same_period_threshold),'Combo'
+    )
+    
+    .otherwise('untreated')
+)
+
+## Creating Day Difference between First Silencer and First Stabilizer treatment
+stage1_rx = stage1_rx.withColumn(
+    'rx_time_btwn_silencer_stabilizer',
+    datediff(stage1_rx['SILENCER_first_rx_date'], stage1_rx['STABILIZER_first_rx_date'])
+)
+stage1_rx = stage1_rx.join(pats_rx_set.select(col('pat_id'),col('rx_treatment_array')), on='pat_id', how='left')
+stage1_rx.createOrReplaceTempView("stage1_rx")
+
+============================================================
+CELL 17 | code
+============================================================
+## Patient Universe
+patient_univ = spark.sql("""
+select distinct pat_id from us_commercial_catalog_prod.lgu_eplontersen.komodo_first_diag_final
+union
+select distinct pat_id from stage1_rx""")
+patient_univ.createOrReplaceTempView("patient_univ")
+
+============================================================
+CELL 18 | code
+============================================================
+### Stage1 Final View
+first_diag_final = spark.table('us_commercial_catalog_prod.lgu_eplontersen.komodo_first_diag_final')
+
+selected_rx_cols = [s for s in stage1_rx.columns if 'rx' in s]
+selected_dx_cols = [s for s in first_diag_final.columns if 'dx' in s]
+
+stage1_final_view = patient_univ.join(first_diag_final.select('pat_id', *selected_dx_cols),on = 'pat_id',how = 'left') \
+  .join(stage1_rx.select('pat_id', *selected_rx_cols),on = 'pat_id',how = 'left')
+
+
+============================================================
+CELL 19 | code
+============================================================
+stage1_final_view.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable('us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage1')
+
+============================================================
+CELL 20 | markdown
+============================================================
+### Enrollment Data Processing
+
+============================================================
+CELL 21 | code
+============================================================
+## Adding enrolment columns
+enrolment_table_and = spark.table("us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_am")
+enrolment_table_or = spark.table("us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_or")
+# stage1_final_view = spark.sql(f'''select * from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage1 ''')
+try:
+    del data_for_closed_claims
+except NameError: 
+    print('No variable to delete.')
+
+enrollment_dic = {"_and":enrolment_table_and, "_or": enrolment_table_or}
+
+#Creating a table with the required columns to calculate overlap between enrollment (closed claims period) and the patient journey of interest (first ATTR dx and latest treatment initiation)
+for suffix,table in enrollment_dic.items():
+    try:
+        data_for_closed_claims
+    except NameError: 
+        print(f'Processed {suffix}')
+        data_for_closed_claims = stage1_final_view.alias("s1").join(
+        table.alias('e'), 
+        on='pat_id', 
+        how='left'
+        ).select(
+        "s1.pat_id",
+        "Dx_Date_of_First_ATTR",
+        "SILENCER_first_rx_date", 
+        "STABILIZER_first_rx_date",
+        col("e.overall_eligy_strt_dt").alias(f'overall_eligy_strt_dt{suffix}'),
+        col("e.overall_eligy_end_dt").alias(f'overall_eligy_end_dt{suffix}')
+        )
+        print(data_for_closed_claims.columns)
+    else:
+        print(f'processed {suffix}')
+        data_for_closed_claims = data_for_closed_claims.alias("s1").join(
+        table.alias('e'), 
+        on='pat_id', 
+        how='left'
+        ).select(
+        "s1.*",
+        col("e.overall_eligy_strt_dt").alias(f'overall_eligy_strt_dt{suffix}'),
+        col("e.overall_eligy_end_dt").alias(f'overall_eligy_end_dt{suffix}')
+        )
+        print(data_for_closed_claims.columns)
+
+============================================================
+CELL 22 | code
+============================================================
+# Creating flag for patients with closed claims based on the following rule - 
+#Patients with >80% of the days between their first ATTR diagnosis and their latest first therapy (silencer or stabilizer) in closed claims 
+try:
+       del stage2_final_view,overlap_calculation,pat_enrollment_overlap
+except NameError:
+       print('No variables to delete.')
+
+overlap_threshold_for_enrollment = 0.8
+and_or_cols = [data_for_closed_claims.pandas_api().columns[data_for_closed_claims.pandas_api().columns.str.contains('and')],data_for_closed_claims.pandas_api().columns[data_for_closed_claims.pandas_api().columns.str.contains('or')]]
+
+for cols in and_or_cols:
+       #Calculating the overlap between patient history and enrollment
+       req_cols = data_for_closed_claims.select('pat_id','SILENCER_first_rx_date','STABILIZER_first_rx_date','Dx_Date_of_First_ATTR',*cols).distinct()
+       overlap_calculation = req_cols.withColumn("overlap_start", greatest(col("Dx_Date_of_First_ATTR"), coalesce(col(cols[0]),to_date(lit('2050-01-01'))))) \
+              .withColumn("overlap_end", least(greatest(col("SILENCER_first_rx_date"),col('STABILIZER_first_rx_date')), coalesce(col(cols[1]),to_date(lit('2050-01-01'))))) \
+              .withColumn("overlap_days",
+                     when(col("overlap_end") >= col("overlap_start"),
+                            datediff(col("overlap_end"), col("overlap_start")) + 1).otherwise(0)) \
+              .withColumn("range_1_days", datediff(greatest(col("SILENCER_first_rx_date"),col('STABILIZER_first_rx_date')), col("Dx_Date_of_First_ATTR")) + 1) \
+              .withColumn("overlap_percentage", col("overlap_days") / col("range_1_days"))
+
+       #Calculating the total Overlap percentage for each patient in the data
+       pat_enrollment_overlap = overlap_calculation.groupBy("pat_id").agg(sum_('overlap_percentage').alias(f"pat_enrollment_overlap{cols[0][-3:]}"))
+       try:
+             stage2_final_view
+       except NameError:
+              #Adding flag to the data to signify patients that would be considered "Enrolled" based on the above criteria
+              stage2_final_view = stage1_final_view.join(pat_enrollment_overlap,on = 'pat_id',how = 'left') \
+              .withColumn(f'Enrolled_{cols[0][-3:]}',when(col(f'pat_enrollment_overlap{cols[0][-3:]}') >= lit(overlap_threshold_for_enrollment),'Yes').otherwise('No'))
+       else:
+              stage2_final_view = stage2_final_view.join(pat_enrollment_overlap,on = 'pat_id',how = 'left') \
+              .withColumn(f'Enrolled_{cols[0][-3:]}',when(col(f'pat_enrollment_overlap{cols[0][-3:]}') >= lit(overlap_threshold_for_enrollment),'Yes').otherwise('No'))
+
+
+============================================================
+CELL 23 | code
+============================================================
+stage2_final_view = stage2_final_view\
+  .withColumn('Add_On', when((col('SILENCER_first_rx_date')<=col('STABILIZER_recent_rx_date'))&(col('STABILIZER_first_rx_date')<=col('SILENCER_recent_rx_date')),'Yes')\
+    .otherwise('No')).withColumn('Switch', when((col('SILENCER_recent_rx_date')<col('STABILIZER_first_rx_date'))|(col('STABILIZER_recent_rx_date')<col('SILENCER_first_rx_date')),'Yes').otherwise('No'))
+
+============================================================
+CELL 24 | code
+============================================================
+#Creating the 90 day window columns for the variables of interest
+date_cols = ['Dx_Date_of_First_ATTR_CM','first_treatment_rx_date','Dx_Date_of_first_PN','Dx_Date_of_First_ATTR']
+
+for col_ in date_cols :
+  stage2_final_view = stage2_final_view.withColumn(f'{col_}_plus90days',date_add(stage2_final_view[col_], within_same_period_threshold))
+
+
+#creating a column with the order of events between PN diagnosis, CM diagnosis and Treatment
+
+date_analysis_cols = ['Dx_Date_of_First_ATTR_CM',
+                      'first_treatment_rx_date',
+                      'Dx_Date_of_first_PN',
+                      'Dx_Date_of_First_ATTR',
+                      'Dx_Date_of_First_ATTR_CM_plus90days',
+                      'first_treatment_rx_date_plus90days',
+                      'Dx_Date_of_first_PN_plus90days',
+                      'Dx_Date_of_First_ATTR_plus90days']
+
+col_names = ['CM_Dx','Tx','PN_Dx','ATTR_Dx','CM_Dx_90','Tx_90','PN_Dx_90','ATTR_Dx_90']
+def safe_sort_dates(*dates):
+    # Zip and sort, treating None as far-future for ordering purposes
+    date_map = zip(col_names, dates)
+    sorted_dates = sorted(date_map, key=lambda x: (x[1] is None, x[1]))
+    return [col_ for col_, _ in sorted_dates]
+
+sort_udf = udf(safe_sort_dates, ArrayType(StringType()))
+
+
+stage2_final_view = stage2_final_view.withColumn("Patient_Journey", sort_udf(*date_analysis_cols))
+stage2_final_view.createOrReplaceTempView('stage2_final_view')
+
+
+============================================================
+CELL 25 | markdown
+============================================================
+### Creating Flags for the First Silencer and Stabilizer Treament 
+
+============================================================
+CELL 26 | code
+============================================================
+attr_rx_dt_cols = stage2_final_view.pandas_api().columns[stage2_final_view.pandas_api().columns.str.contains('AMV|WAI|ONP|VYN|ATTRU')& stage2_final_view.pandas_api().columns.str.contains('first')]
+silencer_rx_dt_cols = stage2_final_view.pandas_api().columns[stage2_final_view.pandas_api().columns.str.contains('AMV|WAI|ONP')& stage2_final_view.pandas_api().columns.str.contains('first')]
+wai_amv_rx_dt_cols = stage2_final_view.pandas_api().columns[stage2_final_view.pandas_api().columns.str.contains('AMV|WAI')& stage2_final_view.pandas_api().columns.str.contains('first')]
+stabilizer_rx_dt_cols = stage2_final_view.pandas_api().columns[stage2_final_view.pandas_api().columns.str.contains('VYN|ATTRU')& stage2_final_view.pandas_api().columns.str.contains('first')]
+
+# silencer_first_rx_dt = least(silencer_rx_dt_cols)
+first_attr = ' '.join([f' when {attr_rx_dt_cols[i]} = first_treatment_rx_date then "{attr_rx_dt_cols[i].split("_")[0]}" ' for i in range(len(attr_rx_dt_cols))])
+first_silencer = ' '.join([f' when {silencer_rx_dt_cols[i]} = SILENCER_first_rx_date then "{silencer_rx_dt_cols[i].split("_")[0]}" ' for i in range(len(silencer_rx_dt_cols))])
+first_amv_wai = ' '.join([f' when least({",".join(wai_amv_rx_dt_cols)}) = {wai_amv_rx_dt_cols[i]} then "{wai_amv_rx_dt_cols[i].split("_")[0]}" ' for i in range(len(wai_amv_rx_dt_cols))])
+first_stabilizer = ' '.join([f' when {stabilizer_rx_dt_cols[i]} = STABILIZER_first_rx_date  then "{stabilizer_rx_dt_cols[i].split("_")[0]}" ' for i in range(len(stabilizer_rx_dt_cols))])
+
+stage2_final_view = spark.sql(f'''
+select *,
+case {first_attr} end as first_attr_rx,
+case {first_silencer} end as first_silencer_rx,
+case {first_amv_wai} end as brand_first_between_amv_wai_rx,
+case {first_stabilizer} end as brand_first_stabilizer_rx
+from stage2_final_view                                      
+''')
+stage2_final_view.createOrReplaceTempView('stage2_final_view')
+
+============================================================
+CELL 27 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2 USING DELTA AS
+SELECT * FROM stage2_final_view WHERE Dx_Date_of_First_ATTR IS NOT NULL
+
+============================================================
+CELL 28 | markdown
+============================================================
+### QC and Analysis
+
+============================================================
+CELL 29 | code
+============================================================
+%sql
+select count(distinct pat_id) from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2 where rx_treatment_flag = 'Yes'
+
+============================================================
+CELL 30 | code
+============================================================
+%sql 
+select year(Dx_Date_of_First_hATTR) year, 
+count(distinct pat_id) filter(where Dx_Date_of_First_hATTR is not null and Dx_final_phenotype in ('PN_Only','Mixed'))  hATTR_PN_only
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2
+group by all  
+
+============================================================
+CELL 31 | code
+============================================================
+#QCing number of Patients in cohorts of interest
+
+#hATTR patients
+spark.sql(f"""
+select count(distinct pat_id) filter(where Dx_Date_of_First_hATTR is not null) hATTR_pats ,
+count(distinct pat_id) filter(where Dx_Date_of_First_hATTR is not null and Dx_final_phenotype = 'PN_Only')  hATTR_PN_only ,
+count(distinct pat_id) filter(where Dx_Date_of_First_hATTR is not null and Dx_final_phenotype = 'CM_Only')  hATTR_CM_only,
+count(distinct pat_id) filter(where Dx_Date_of_First_hATTR is not null and Dx_final_phenotype = 'Mixed')  hATTR_Mixed_only,
+count(distinct pat_id) filter(where SILENCER_first_rx_date is not null) patients_on_silencer,
+count(distinct pat_id) filter(where WAINUA_FAMILY_first_rx_date is not null) patients_on_wainua,
+count(distinct pat_id) filter(where ONPATTRO_FAMILY_first_rx_date is not null) patients_on_onpattro,
+count(distinct pat_id) filter(where AMVUTTRA_FAMILY_first_rx_date is not null) patients_on_amvuttra,
+count(distinct pat_id) filter(where VYNDAMAX_FAMILY_first_rx_date is not null or ATTRUBY_FAMILY_first_rx_date is not null) patients_on_stabilizer 
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2
+""").display()
+
+spark.sql(f'''
+select distinct dx_final_phenotype
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2
+''').display()
+
+============================================================
+CELL 32 | markdown
+============================================================
+### Wainua Patients in closed claims that have a history of amvuttra use 
+
+============================================================
+CELL 33 | code
+============================================================
+%sql
+select count(distinct pat_id) total_closed_patients
+,count(distinct pat_id) filter (where WAINUA_FAMILY_first_rx_date is not null) total_closed_Wainua_pats,
+count(distinct pat_id) filter (where brand_first_between_amv_wai_rx = 'AMVUTTRA' and WAINUA_FAMILY_first_rx_date is not null) total_closed_Wainua_pats_from_amvuttra
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2  
+where Enrolled_and = 'Yes'  
+
+============================================================
+CELL 34 | markdown
+============================================================
+### Analysis Objectives
+
+  1. Identify Mixed Phenotype hATTR Patients
+  2. Calculate what % of them get a PN diagnosis before a CM Diagnosis and vice-versa.
+  3. For those that get CM first, what % of them get a stabilizer prescribed and how many get a silencer first.
+  4. What percentage of CM first patients see therapy change and when. How does this correlate to their PN diagnosis.
+
+
+============================================================
+CELL 35 | code
+============================================================
+# 1. Mixed phenotype hATTR patients
+hATTR_mixed_phenotype = spark.sql(f'''
+select *
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2
+where Dx_final_phenotype in ('Mixed') and Dx_Date_of_First_hATTR is not null 
+''')
+hATTR_mixed_phenotype.createOrReplaceTempView('hATTR_mixed_phenotype')
+
+
+============================================================
+CELL 36 | code
+============================================================
+hATTR_mixed_phenotype.display()
+
+============================================================
+CELL 37 | code
+============================================================
+#Treated patients, from those how many are in stabilizer only, silencer only and both. For the both group, how many had a stabiizer first, silencer first and both simultaneously. 
+spark.sql(f'''select
+-- Patients treated 
+count(distinct pat_id) Pats_treated,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'Yes') patients_treated_with_stabilizer_only,
+count(distinct pat_id) filter (where rx_silencer_only_flag = 'Yes') patients_treated_with_silencer_only,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No') patients_treated_with_both,
+
+-- From the patients treated with both 
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Stabilizer'
+) patients_treated_with_stabilizer_first,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Silencer')
+patients_treated_with_silencer_first,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Combo') 
+both_simultaneously,
+
+-- Patients treated with both with PN and CM diagnosis more than 90 days appart
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and Dx_Close_Diagnosis = 'No') patients_treated_with_both_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Stabilizer' and Dx_Close_Diagnosis = 'No') patients_treated_with_stabilizer_first_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Silencer' and Dx_Close_Diagnosis = 'No') patients_treated_with_silencer_first_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Combo' and Dx_Close_Diagnosis = 'No') both_simultaneously_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and Dx_Close_Diagnosis = 'No' and Dx_PN_First = 'Yes' )patients_with_PN_first
+
+from hATTR_mixed_phenotype
+where rx_treatment_flag = 'Yes'  
+''').display()
+
+============================================================
+CELL 38 | code
+============================================================
+#Just for Patients with Closed Claims 
+
+spark.sql(f'''select
+-- Patients treated 
+count(pat_id)  Pats_treated,
+count(pat_id) filter (where rx_stablizer_only_flag = 'Yes') patients_treated_with_stabilizer_only,
+count(pat_id) filter (where rx_silencer_only_flag = 'Yes') patients_treated_with_silencer_only,
+count(pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No') patients_treated_with_both,
+
+-- From the patients treated with both 
+count(pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Stabilizer'
+) patients_treated_with_stabilizer_first,
+count(pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Silencer')
+patients_treated_with_silencer_first,
+count(pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Combo') 
+both_simultaneously,
+
+-- Patients treated with both with PN and CM diagnosis more than 90 days appart
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and Dx_Close_Diagnosis = 'No') patients_treated_with_both_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Stabilizer' and Dx_Close_Diagnosis = 'No') patients_treated_with_stabilizer_first_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Silencer' and Dx_Close_Diagnosis = 'No') patients_treated_with_silencer_first_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and first_treatment_rx = 'Combo' and Dx_Close_Diagnosis = 'No') both_simultaneously_far_diag,
+count(distinct pat_id) filter (where rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and Dx_Close_Diagnosis = 'No' and Dx_PN_First = 'Yes' )patients_with_PN_first
+
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and rx_treatment_flag = 'Yes' --and year(Dx_Date_of_First_hATTR) between 2023 and 2025  
+''').display()
+
+============================================================
+CELL 39 | code
+============================================================
+%sql
+select * 
+from hATTR_mixed_phenotype 
+where Enrolled_and = 'Yes' and rx_treatment_flag = 'Yes' and rx_stablizer_only_flag = 'No' and rx_silencer_only_flag = 'No' and Add_On = 'Yes' 
+
+============================================================
+CELL 40 | markdown
+============================================================
+### Patient Journey 
+
+============================================================
+CELL 41 | code
+============================================================
+#Looking at the patient journey with the new flags
+t = hATTR_mixed_phenotype.withColumn('num',lit(1)).filter(col('Enrolled_and')=='Yes')
+te = t.filter((col('Dx_Close_Diagnosis')=='No')&(col('Dx_PN_First')=='Yes')).pandas_api().pivot_table(index=['first_treatment_rx'],columns = 'Patient_Journey', aggfunc='count',values='num')
+te.reset_index().to_spark().fillna(0).display()
+
+============================================================
+CELL 42 | code
+============================================================
+spark.sql(f'''
+select * 
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and Dx_Close_Diagnosis = 'Yes' -- and Dx_PN_First = 'Yes' 
+--and first_treatment_rx = 'Stabilizer'
+and rx_silencer_only_flag = 'No' and rx_stablizer_only_flag = 'No' and Add_On = 'No'
+''').display()
+
+#15 PN first patients had ATTR diagnosis way later, 4 of them are combo and 11 stabilizer only
+
+============================================================
+CELL 43 | code
+============================================================
+#Calculating the time difference between days between CM and PN
+spark.sql(f'''
+select first_pn_rx,first_heart_dx,avg(diff_between_diagnosis_tx) avg_diff , median(diff_between_diagnosis_tx) median_diff, count(distinct pat_id) total_pats  
+from (
+select pat_id,first_treatment_rx,Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM, 
+date_diff(first_treatment_rx_date,least(Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM)) diff_between_diagnosis_tx,
+case when Dx_Date_of_First_ATTR_CM = Dx_Date_of_First_HF then 'HF'
+when Dx_Date_of_First_ATTR_CM= Dx_Date_of_First_CM then 'CM'
+when Dx_Date_of_First_ATTR_CM = Dx_Date_of_First_AFIB_HT then 'AFIB_HT' end as first_heart_dx,
+case when Dx_Date_of_first_PN = Dx_Date_of_First_DPN then 'DPN'
+when Dx_Date_of_first_PN= Dx_Date_of_First_GPN then 'GPN' 
+else 'E851' end as first_pn_rx
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and Dx_Close_Diagnosis = 'Yes') -- and Dx_PN_First = 'Yes')
+group by all
+''').display()  
+
+============================================================
+CELL 44 | code
+============================================================
+#De novo 
+t.filter(col('Dx_Close_Diagnosis')=='Yes').display()
+
+============================================================
+CELL 45 | markdown
+============================================================
+### Patient Journey from 2022 Onwards
+
+============================================================
+CELL 46 | code
+============================================================
+#Looking at the patient journey with the new flags
+#&(col('Dx_PN_First')=='No')
+t_2022 = hATTR_mixed_phenotype.withColumn('num',lit(1)).filter((col('Enrolled_and')=='Yes') & (col('Dx_Date_of_First_ATTR')>=to_date(lit('2022-01-01'))))
+te_2022 = t_2022.filter((col('Dx_Close_Diagnosis')=='Yes')).pandas_api().pivot_table(index=['first_treatment_rx'],columns = 'Patient_Journey', aggfunc='count',values='num')
+te_2022.reset_index().to_spark().fillna(0).display()
+
+============================================================
+CELL 47 | code
+============================================================
+#Calculating the time difference between days between CM and PN
+spark.sql(f'''
+select first_pn_rx,first_heart_dx,
+avg(diff_between_diagnosis_tx) avg_diff_dx_tx , median(diff_between_diagnosis_tx) median_diff_dx_tx,
+avg(date_diff_pn_cm) avg_diff_pn_cm , median(date_diff_pn_cm) median_diff_pn_cm,
+count(distinct pat_id) total_pats  
+from (
+select pat_id,first_treatment_rx,Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM, 
+date_diff(Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM) date_diff_pn_cm,
+date_diff(first_treatment_rx_date,least(Dx_Date_of_first_PN,Dx_Date_of_First_ATTR_CM)) diff_between_diagnosis_tx,
+case when Dx_Date_of_First_ATTR_CM= Dx_Date_of_First_HF then 'HF'
+when Dx_Date_of_First_ATTR_CM= Dx_Date_of_First_CM then 'CM'
+when Dx_Date_of_First_ATTR_CM = Dx_Date_of_First_AFIB_HT then 'AFIB_HT' end as first_heart_dx,
+case when Dx_Date_of_first_PN = Dx_Date_of_First_DPN then 'DPN'
+when Dx_Date_of_first_PN= Dx_Date_of_First_GPN then 'GPN' 
+else 'E85.1' end as first_pn_rx
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and Dx_Date_of_First_ATTR >= date('2022-01-01') and Dx_Close_Diagnosis = 'Yes')-- and Dx_PN_First = 'Yes')
+group by all
+''').display()  
+
+============================================================
+CELL 48 | code
+============================================================
+spark.sql(f'''
+select * 
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and Dx_Date_of_First_ATTR >= date('2022-01-01') 
+and Dx_Close_Diagnosis = 'Yes' --and Dx_PN_First = 'Yes' 
+and rx_silencer_only_flag = 'No' and rx_stablizer_only_flag = 'No'
+--and first_treatment_rx = 'Stabilizer'
+and Add_On = 'Yes'
+''').display()
+
+============================================================
+CELL 49 | markdown
+============================================================
+### Geographic Breakdown
+
+============================================================
+CELL 50 | code
+============================================================
+#Looking at Geographical breakdowns for Wainua and other hATTR SOB to see if there are locations where some practices are more prevalent
+
+closed_pats_with_state = spark.sql(f'''
+select a.*, b.pat_st state 
+from  hATTR_mixed_phenotype a
+left join (select * from us_commercial_app_commons_prod.d_claim_pat where src_sys_nm = 'KOMODO_ATTR' ) b 
+on a.pat_id = b.pat_id
+where Enrolled_and = 'Yes'
+''')
+closed_pats_with_state.createOrReplaceTempView('closed_pats_with_state')
+
+
+
+
+============================================================
+CELL 51 | code
+============================================================
+spark.sql(f''' 
+select state, count(distinct pat_id) Total_Pats,
+count(distinct pat_id) filter(where first_attr_rx = 'WAINUA')/ count(distinct pat_id) Perc_Pats_Wainua_First_tx,
+count(distinct pat_id) filter(where rx_silencer_only_flag = 'Yes' and first_silencer_rx <> 'WAINUA')/ count(distinct pat_id) Perc_switch_from_silencer
+from closed_pats_with_state
+where WAINUA_FAMILY_first_rx_date is not null 
+group by all           
+''').display()
+
+============================================================
+CELL 52 | markdown
+============================================================
+### SOB Analysis
+
+============================================================
+CELL 53 | code
+============================================================
+# SOB Split for Wainua 
+
+spark.sql(f'''
+select count(distinct pat_id) all_enrolled_pats_with_wainua,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only') pn_only_pats,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed') mixed_pats,
+
+-- out of PN only
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only' and first_attr_rx = 'WAINUA') pn_wainua_first_treatment,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only' and first_treatment_rx = 'Silencer' and first_silencer_rx <> 'WAINUA') pn_switched_from_silencer,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only' and Switch = 'Yes' and first_treatment_rx = 'Stabilizer') pn_switched_from_stabilizer,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only' and (first_treatment_rx = 'Combo' or (Add_On = 'Yes' and first_treatment_rx = 'Stabilizer'))) pn_ad_on,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'PN_Only' and (first_treatment_rx = 'Combo' or (array_position(rx_treatment_array,'WAINUA FAMILY')>1 and Add_On = 'No'))) pn_total_switches,
+
+
+-- out of mixed
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed' and first_attr_rx = 'WAINUA') mixed_wainua_first_treatment,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed' and first_treatment_rx = 'Silencer' and first_silencer_rx <> 'WAINUA') mixed_switched_from_silencer,
+
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed' and Switch = 'Yes' and first_treatment_rx = 'Stabilizer') mixed_switched_from_stabilizer,
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed' and ((first_treatment_rx = 'Combo' or (Add_On = 'Yes' and first_treatment_rx = 'Stabilizer')) and array_position(rx_treatment_array,'WAINUA FAMILY')-array_position(rx_treatment_array,'VYNDAMAX FAMILY')=1  ) ) mixed_combo,
+
+count(distinct pat_id) filter(where Dx_final_phenotype = 'Mixed' and ((array_position(rx_treatment_array,'WAINUA FAMILY')>1 and Add_On = 'No'))) mixed_total_switches
+
+from us_commercial_catalog_prod.lgu_eplontersen.komodo_pat_jrny_stage2 
+where Enrolled_and = 'Yes' and WAINUA_FAMILY_first_rx_date is not null and Dx_Date_of_First_hATTR is not null 
+''').display()
+
+============================================================
+CELL 54 | markdown
+============================================================
+### Potential Follow ups
+1. Look at the Specialties of the doctors that are treating in combo and see if what specialties prescribe more combo therapies? For patients with combo therapy, match on therapy date and Patient to get the HCP ID and look at their specialties.
+  - Is the combo usage different for Amvuttra and Wainua when comparing only patients started in 2024.
+2. How does seeing a neurologist affect the treatments a patient is on? Look at when patients see a neurologist (date of first Neuro visit) and see what treatments they start on after the visit.
+
+
+
+============================================================
+CELL 55 | code
+============================================================
+%sql
+select rx_treatment_array, count(distinct pat_id) TotalPatients 
+from hATTR_mixed_phenotype
+where Enrolled_and = 'Yes' and Dx_Date_of_First_ATTR >= date('2023-01-01')
+group by all 
+

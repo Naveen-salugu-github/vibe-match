@@ -1,0 +1,607 @@
+
+============================================================
+CMD 0 | type=auto | subtype=command
+============================================================
+%md
+# Creating an SP SD Table with Demand at the Account ZIP level
+- Input Tables:
+    - sp_table - us_commercial_app_commons_prod.f_ship_rfrl_sp_cust_prod_payr_wk
+    - sd_table - us_commercial_app_commons_prod.f_ship_sls_sd_cust_prod_wk
+    - HCP to Primary IDN mapping - us_commercial_catalog_prod.lgu_eplontersen.d_idn_hcp_fctr_acct
+    - HCP Demographics - us_commercial_catalog_prod.lgu_eplontersen.d_hcp_specialty_dimension
+    - HCP - HCA - IDN Affiliations - us_commercial_catalog_prod.lgu_eplontersen.hcp_hca_idn_corrected_affiliation_final 
+
+- Output Tables: 
+    - SP Patient x HCP x Daily Table - us_commercial_catalog_prod.lgu_eplontersen.sp_hcp_date
+    - SD HCA x Daily Table - us_commercial_catalog_prod.lgu_eplontersen.sd_hca_idn
+    - SPSD x District x Daily Table - us_commercial_catalog_prod.lgu_eplontersen.spsd_districtlevel_daily
+    - SDSD x IDN x Weekly Table -  us_commercial_catalog_prod.lgu_eplontersen.sd_sp_hcp_hca_idn
+    - SP Referrals and Demand Table - us_commercial_catalog_prod.lgu_eplontersen.sp_referrals_demands
+
+============================================================
+CMD 1 | type=auto | subtype=command
+============================================================
+%md
+## 1. Necessary Imports
+
+============================================================
+CMD 2 | type=auto | subtype=command
+============================================================
+from pyspark.sql.functions import lit,round,sum as sum_,col,lpad,coalesce,greatest,expr
+from datetime import datetime, timedelta,date
+from functools import reduce
+
+============================================================
+CMD 3 | type=auto | subtype=command
+============================================================
+%md
+## 2. Loading Latest Geo Alignment Table
+
+============================================================
+CMD 4 | type=auto | subtype=command
+============================================================
+x = spark.sql('''
+select date_format(current_date, 'MMMyyyy') as month
+, date_format(add_months(current_date, -1), 'MMMyyyy') as prev_month
+''')
+
+x2 = x.collect()
+geo_table_name = 'us_commercial_catalog_prod.lg_targeting.stp_geoalignment_' + x2[0].__getitem__('month')
+# call_plan = 'lg_targeting.stp_callplan_' + x2[0].__getitem__('month')
+
+print(geo_table_name)
+# print(call_plan)
+
+# try: 
+#   spark.sql('select count(*) from {cp}'.format(cp=call_plan))
+# except:
+#   print('Current month call plan not yet available')
+#   call_plan = 'lg_targeting.stp_callplan_' + x2[0].__getitem__('prev_month')
+  
+try:
+  spark.sql('select count(*) from {a}'.format(a=geo_table_name))
+except:
+  print('Current month alignment not yet available')
+  geo_table_name = 'us_commercial_catalog_prod.lg_targeting.stp_geoalignment_' + x2[0].__getitem__('prev_month')
+  
+print(geo_table_name)
+
+
+============================================================
+CMD 5 | type=auto | subtype=command
+============================================================
+%md
+## 3. Declaring Variables
+
+============================================================
+CMD 6 | type=auto | subtype=command
+============================================================
+
+# table_str = "lg_targeting.stp_geoalignment_"
+# month_abbrev = str(date.today().strftime("%b"))
+# year = str(date.today().year)
+# geo_table_name = table_str + month_abbrev + year
+# print(geo_table_name)
+# geo_table_name = "lg_targeting.stp_geoalignment_feb2024"
+geo_team = ('BBU_ATTR','BBU_ATTR_PR','BBU_ATTR_1A')
+# ,'BBU_ATTR_1B'
+
+# Define variable for table names and respective filters
+# for Specialty pharmacy (SP) and Specialty Distributor (SD) tables
+
+sp_table = "us_commercial_app_commons_prod.f_ship_rfrl_sp_cust_prod_payr_wk"
+sd_table = "us_commercial_app_commons_prod.f_ship_sls_sd_cust_prod_wk"
+
+# Define filter variables
+# for market name and ndc
+mkt_nm = "ATTR MARKET"
+ndc= "('00310940001','00310942001')"
+diagcd= "('E85.1', 'E85.2', 'E85.4', 'E85.8', 'E85.9')"
+
+
+============================================================
+CMD 7 | type=auto | subtype=command
+============================================================
+%md
+## 4. Creating the SP Demand Table - Patient x HCP x Daily level
+ - Corrected affiliations primary IDN - so it can be used to aggregate at IDN level 
+
+============================================================
+CMD 8 | type=auto | subtype=command
+============================================================
+sp_base=spark.sql(f""" 
+select distinct sp.*,coalesce(zip,src_cust_zip) as zip,hcp_cust_name 
+from                  
+  (select az_cust_id,sp_pat_id,date(ship_dt) as ship_dt,diag_cd,wk_end_dt,coalesce(src_cust_zip,cust_zip) as src_cust_zip,sum(sum_qt) as SP_demand_units, src_payr, src_pay_typ, ndc
+  from 
+    (select az_cust_id,sp_pat_id,
+    ship_dt, diag_cd,src_cust_zip,cust_zip,
+    (case when extract(dayofweek from ship_dt) =7 then DATE_ADD(ship_dt,6)
+      else DATE_ADD(ship_dt, 6 - extract(dayofweek from ship_dt)) end) as wk_end_dt, 
+      sum(coalesce(qty_disp,0)) as sum_qt, coalesce(src_payr, 'NOT FOUND') as src_payr, COALESCE(src_pay_typ,6) AS src_pay_typ, ndc
+      from {sp_table} 
+      where mkt_nm='{mkt_nm}' and medvntx_ind='N' and file_typ in ('DISPENSE','SALES') and flex_1= 1586979
+        and ndc in {ndc} 
+      --and diag_cd in {diagcd} 
+      group by all)
+    group by all) sp
+   left join (select distinct hcp_az_cust_id,hcp_cust_name,zip from us_commercial_catalog_prod.lgu_eplontersen.d_hcp_specialty_dimension) demog on sp.az_cust_id = demog.hcp_az_cust_id
+ """)
+
+sp_base.createOrReplaceTempView("sp_base")
+
+
+============================================================
+CMD 9 | type=auto | subtype=command
+============================================================
+spark.sql("""
+select distinct 
+CASE 
+  WHEN ndc = 00310940001 THEN "WAINUA PEN"
+  WHEN ndc = 00310942001 THEN "WAINUA PFS"
+END AS Product,
+az_cust_id,sp_pat_id,ship_dt,diag_cd,wk_end_dt,zip,SP_demand_units,hcp_cust_name,
+PRIMARY_IDN_ID, 
+PRIMARY_IDN_Name, 
+PRIMARY_IDN_Type,
+SECND_IDN_ID, 
+SECND_IDN_Name, 
+SECND_IDN_Type,
+src_payr AS payer,
+CASE
+  WHEN src_pay_typ=1 THEN "CASH"
+  WHEN src_pay_typ=2 THEN "FEE FOR SERVICE MEDICAID"
+  WHEN src_pay_typ=3 THEN "MANAGED MEDICAID"
+  WHEN src_pay_typ=4 THEN "COMMERCIAL"
+  WHEN src_pay_typ=5 THEN "MEDICARE"
+  ELSE "OTHER GOVT" END AS pay_type
+from sp_base b    
+left join (select * from us_commercial_catalog_prod.lgu_eplontersen.d_idn_hcp_fctr_acct where rank_idn_type = 1) as a2
+  on b.az_cust_id = a2.hcp_az_cust_id     
+""").createOrReplaceTempView("sp_base_1")
+
+============================================================
+CMD 10 | type=auto | subtype=command
+============================================================
+spark.sql("""select sp.*,a.min_ship_dt from sp_base_1 sp
+left join (select distinct sp_pat_id,min(ship_dt) as min_ship_dt from sp_base_1 group by all) a
+on sp.sp_pat_id=a.sp_pat_id
+""").createOrReplaceTempView("sp_base_2")
+
+============================================================
+CMD 11 | type=auto | subtype=command
+============================================================
+sp_final=spark.sql(f"""
+select sp.*,date(date_trunc("MONTH",ship_dt)) as Month,geo.region_name,geo.district_name,terr_id,terr_name
+from sp_base_2 sp
+left join (
+  select distinct region_name,district_name,zip,terr_id,terr_name 
+  from {geo_table_name} where team in {geo_team}) geo 
+on sp.zip = geo.zip 
+--order by sp.wk_end_dt desc,sp.sp_demand_units desc
+""")
+
+sp_final.createOrReplaceTempView("sp_final")
+
+
+============================================================
+CMD 12 | type=auto | subtype=command
+============================================================
+%md
+### 4.1 Output - Final HCP level SP Demand at Daily Level table
+
+============================================================
+CMD 13 | type=auto | subtype=command
+============================================================
+spark.sql('''
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.sp_hcp_date using delta as select * from sp_final          
+          ''')
+
+============================================================
+CMD 14 | type=auto | subtype=command
+============================================================
+%md
+## 5. Creating the SD Demand Table - HCA x Daily Level
+  - Table contains IDN and Territory/District information as well.
+
+============================================================
+CMD 15 | type=auto | subtype=command
+============================================================
+# Calculation of SD DU by summing up the quality shipped to SP and SD and grouping by week ending date.
+sd_du = spark.sql(f"""
+SELECT 
+   CASE 
+      WHEN dim.ndc = 00310940001 THEN "WAINUA PEN"
+      WHEN dim.ndc = 00310942001 THEN "WAINUA PFS"
+   END AS Product,
+   dim.az_cust_id,
+   coalesce(dim.src_cust_zip,cust_zip) as src_cust_zip,
+   date(dim.rpt_dt) as rpt_dt,
+   (case 
+      when extract(dayofweek from dim.rpt_dt) =7 then DATE_ADD(dim.rpt_dt,6) 
+      else DATE_ADD(dim.rpt_dt, 6 - extract(dayofweek from dim.rpt_dt)) 
+   end) as wk_end_dt,
+   date(date_trunc('MONTH',dim.rpt_dt)) as Month, 
+   coalesce(SD.SD_DEMAND_UNITS,0) as SD_DEMAND_UNITS,
+   coalesce(SD_ship.SD_SHIPMENT_UNITS_TO_SP,0) as SD_SHIPMENT_UNITS_TO_SP 
+FROM
+   (
+      select distinct az_cust_id,
+      rpt_dt,src_cust_zip,cust_zip,ndc from {sd_table}
+      where mkt_nm='{mkt_nm}' and ndc in {ndc}
+   ) as dim
+
+FULL JOIN
+
+   (select az_cust_id,rpt_dt,src_cust_zip, ndc,coalesce(sum(sum_qt),0) as SD_demand_units 
+   from (
+      select az_cust_id, rpt_dt, src_cust_zip, ndc,sum(ship_qty) as sum_qt 
+      from {sd_table}    
+      where mkt_nm='{mkt_nm}' 
+      and src_dedupe_ind='N' and ndc in {ndc} group by az_cust_id,rpt_dt,src_cust_zip,ndc) 
+   group by az_cust_id,rpt_dt,src_cust_zip,ndc) as SD
+   on dim.rpt_dt=SD.rpt_dt and dim.az_cust_id=SD.az_cust_id and dim.src_cust_zip = SD.src_cust_zip and dim.ndc = SD.ndc
+
+FULL JOIN
+
+   (select az_cust_id,rpt_dt, ndc,coalesce(sum(sum_qt),0) as SD_shipment_units_to_sp 
+   from (
+      select az_cust_id,rpt_dt, ndc, sum(ship_qty) as sum_qt 
+      from {sd_table} 
+      where mkt_nm='{mkt_nm}' 
+      and src_dedupe_ind='Y' and ndc in {ndc}  group by az_cust_id,rpt_dt,ndc) 
+   group by az_cust_id,rpt_dt,ndc) as SD_ship
+   ON dim.rpt_dt = SD_ship.rpt_dt and dim.az_cust_id=SD_ship.az_cust_id and dim.ndc = SD_ship.ndc
+""")
+sd_du.createOrReplaceTempView("sd_du")
+
+============================================================
+CMD 16 | type=auto | subtype=command
+============================================================
+all_hca_profile_IDN = spark.sql("""
+select distinct a1.*,aff.hca_zip,aff.hca_name hca_cust_name,aff.hca_state,
+IDN_ID affiliation_ID, IDN_name affiliation_name, IDN_type affiliation_type,
+Territory_ID terr_id,Territory_name terr_name,region_name,district_name
+from sd_du as a1
+left join (select * from us_commercial_catalog_prod.lgu_eplontersen.hcp_hca_idn_corrected_affiliation_final where Source = 'HCA') aff
+on a1.az_cust_id=aff.hcp_Az_Cust_id
+""")
+
+all_hca_profile_IDN.createOrReplaceTempView("all_hca_profile_IDN")
+
+============================================================
+CMD 17 | type=auto | subtype=command
+============================================================
+%md
+### 5.1 Output - Final Account level SD Demand at Daily Level
+
+============================================================
+CMD 18 | type=auto | subtype=command
+============================================================
+spark.sql('''
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.sd_hca_idn using delta as 
+select distinct * from all_hca_profile_IDN          
+          ''')
+
+============================================================
+CMD 19 | type=auto | subtype=command
+============================================================
+%md
+## 6. Creating the SP and SD District x Daily Table
+- Contains Wainua Demand data at the District x Diagnosis code x daily level. 
+- Used in the Dashboard to display District level demand
+
+============================================================
+CMD 20 | type=auto | subtype=command
+============================================================
+spsd_districtlevel_daily = spark.sql(f'''
+select
+  coalesce(sd.product, sp.product) as Product,
+  coalesce(sd.rpt_dt, sp.ship_dt) date,
+  coalesce(sd.Month,sp.Month) Month,
+  coalesce(sd.wk_end_dt,sp.wk_end_dt) week_end_dt,
+  coalesce(sd.region_name,sp.region_name) Region,
+  coalesce(sd.district_name,sp.district_name) District,
+  sp.diag_cd,
+  coalesce(sd.SD_DEMAND_UNITS,0) as SD_Demand, coalesce(sd.SD_SHIPMENT_UNITS_TO_SP, 0) as SD_Shipment_to_SP, coalesce(sp.SP_Demand_Units,0 ) as SP_Demand
+from
+  (
+    select
+      product, rpt_dt, wk_end_dt,Month,
+      region_name,"null" as diag_cd,
+      district_name,
+      sum(SD_DEMAND_UNITS) as SD_DEMAND_UNITS,
+      sum(SD_SHIPMENT_UNITS_TO_SP) as SD_SHIPMENT_UNITS_TO_SP
+    from
+      us_commercial_catalog_prod.lgu_eplontersen.sd_hca_idn
+    group by
+      all
+  ) as sd full
+  join (
+    select
+      product, ship_dt,wk_end_dt,Month,
+      region_name,
+      district_name,
+      diag_cd,
+      sum(SP_demand_units) as SP_Demand_Units
+    from
+      us_commercial_catalog_prod.lgu_eplontersen.sp_hcp_date
+    group by
+      all
+  ) as sp on sd.rpt_dt = sp.ship_dt
+  and sd.district_name = sp.district_name and sd.diag_cd = sp.diag_cd and sd.product = sp.product
+  order by date desc, (SP_Demand_Units+SD_DEMAND_UNITS) desc                                                                     
+''')
+spsd_districtlevel_daily.createOrReplaceTempView("spsd_districtlevel_daily")
+
+============================================================
+CMD 21 | type=auto | subtype=command
+============================================================
+%md
+### 6.1 Output - Final District Level SPSD Table
+
+============================================================
+CMD 22 | type=auto | subtype=command
+============================================================
+spark.sql(''' 
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.spsd_districtlevel_daily using delta as
+select * from spsd_districtlevel_daily
+''')
+
+============================================================
+CMD 23 | type=auto | subtype=command
+============================================================
+%md
+## 7. Creating the sd_sp_hcp_hca_idn Table - HCP/HCA x Wk/month
+- Contains SP Demand Data at the HCP level and SD Demand data at the HCA level x Weekly/monthly frequency with their respective IDN affiliations.
+- Used in:
+  - IDN Potential Dashboard processing
+  - Monthly Deck Processing Code - wherever IDN level wainua data is required
+  - Various Ad Hoc Requests where IDN level Wainua data is required
+
+============================================================
+CMD 24 | type=auto | subtype=command
+============================================================
+sp_wk = spark.sql(f'''
+select product,az_cust_id, diag_cd, wk_end_dt, month, region_name, district_name,terr_id, terr_name, zip, hcp_cust_name, PRIMARY_IDN_ID, PRIMARY_IDN_Name, sum(SP_demand_units) SP_Demand, "SP" as SP_SD
+from sp_final 
+group by all            
+                  ''')
+sp_wk.createOrReplaceTempView('sp_wk')
+
+sd_wk = spark.sql(f'''
+select product,affiliation_ID, az_cust_id,Month,  wk_end_dt, affiliation_name,hca_cust_name, region_name, district_name,terr_id, terr_name,hca_zip, sum(SD_DEMAND_UNITS) SD_Demand, "SD" as SP_SD
+from all_hca_profile_IDN b
+group by all                   
+''')
+sd_wk.createOrReplaceTempView('sd_wk')
+
+sp_sd_hca_idn = spark.sql(f'''
+select distinct coalesce(a.product,b.product) Product, coalesce(a.PRIMARY_IDN_ID,b.affiliation_ID) Final_IDN_ID, coalesce(a.az_cust_id,b.az_cust_id) az_cust_id, coalesce(a.month,b.Month) Month, coalesce(a.wk_end_dt,b.wk_end_dt) wk_end_dt,
+a.diag_cd, coalesce(a.PRIMARY_IDN_Name,b.affiliation_name) Final_IDN_Name, coalesce(a.hcp_cust_name,b.hca_cust_name) hca_name, coalesce(a.region_name,b.region_name) Region_Name, coalesce(a.district_name,b.district_name) District_Name,
+coalesce(a.terr_id,b.terr_id) terr_id, coalesce(a.terr_name,b.terr_name) terr_name, coalesce(a.SP_SD,b.SP_SD) SP_SD, coalesce(a.zip,b.hca_zip) hca_zip,
+coalesce(b.SD_Demand,0) SD_Demand , coalesce(a.SP_Demand,0) SP_Demand, coalesce(b.SD_Demand,0) + coalesce(a.SP_Demand,0) Total
+from sp_wk as a
+
+  full join sd_wk as b
+  on a.wk_end_dt = b.wk_end_dt and a.PRIMARY_IDN_ID = b.affiliation_ID and a.az_cust_id = b.az_cust_id and  a.zip = b.hca_zip and a.product = b.product
+''')
+sp_sd_hca_idn.createOrReplaceTempView('sp_sd_hca_idn')
+
+============================================================
+CMD 25 | type=auto | subtype=command
+============================================================
+%md
+### 7.1 Output - Final HCP and Account level SPSD Weekly table
+
+============================================================
+CMD 26 | type=auto | subtype=command
+============================================================
+spark.sql('''  
+  create or replace table us_commercial_catalog_prod.lgu_eplontersen.sd_sp_hcp_hca_idn using delta as 
+  select * from sp_sd_hca_idn         
+          ''')
+
+============================================================
+CMD 27 | type=auto | subtype=command
+============================================================
+%sql
+select sum(SP_Demand), sum(sd_demand), sum(Total) from sp_sd_hca_idn 
+
+============================================================
+CMD 28 | type=auto | subtype=command
+============================================================
+%md
+## 8. Creating the SP Referrals demand Table
+- Used in the Referral Outcomes in the HQ View of the DSM dashboard.
+- Applies different business rules for Discontinued and Triaged patients when compared to the SP Metrics table creation code.
+
+============================================================
+CMD 29 | type=auto | subtype=command
+============================================================
+universe=spark.sql(f""" select distinct referral_hcp_az_id,sp_pat_id,referral_month from      
+                   us_commercial_catalog_prod.lgu_eplontersen.sp_metrics 
+                   union 
+                   select az_cust_id,sp_pat_id,month from us_commercial_catalog_prod.lgu_eplontersen.sp_hcp_date 
+                   union
+                  (select az_cust_id,sp_pat_id,date_trunc("MONTH",sta_updt_dt) as Month from {sp_table} 
+                  where mkt_nm='{mkt_nm}' and medvntx_ind='N' and flex_1= 1586979
+                  and ndc in {ndc} and rfrl_sta = "DISCONTINUED" )
+                   """)
+universe.createOrReplaceTempView("universe")
+
+============================================================
+CMD 30 | type=auto | subtype=command
+============================================================
+discontinued_pat=spark.sql(f""" 
+select distinct az_cust_id,a.sp_pat_id,sta_updt_dt,case when a.sta_updt_dt > max_status_date then 1 else 0 end as discontinued_flag  from   
+(select distinct az_cust_id,sp_pat_id,sta_updt_dt  from {sp_table} 
+   where mkt_nm='{mkt_nm}' and medvntx_ind='N' and flex_1= 1586979
+    and ndc in {ndc} 
+    and rfrl_sta = "DISCONTINUED"
+    group by all
+    ) a
+  left join
+  (select distinct sp_pat_id,max(coalesce(sta_updt_dt,ship_dt)) as max_status_date from {sp_table} 
+   where mkt_nm='{mkt_nm}' and medvntx_ind='N' and flex_1= 1586979
+    and ndc in {ndc} and rfrl_sta != "DISCONTINUED"
+    group by all
+    ) b on a.sp_pat_id=b.sp_pat_id """)
+discontinued_pat.createOrReplaceTempView("discontinued_pat")
+
+============================================================
+CMD 31 | type=auto | subtype=command
+============================================================
+triaged_pat=spark.sql(f""" select distinct az_cust_id,a.sp_pat_id,sta_updt_dt,case when a.sta_updt_dt > max_status_date then 1 else 0 end as triaged_flag  from   
+(select distinct az_cust_id,sp_pat_id,sta_updt_dt  from {sp_table} 
+   where mkt_nm='{mkt_nm}' and medvntx_ind='N' and flex_1= 1586979
+    and ndc in {ndc} 
+    and rfrl_sta = "TRIAGED"
+    group by all
+    ) a
+  left join
+  (select distinct sp_pat_id,max(coalesce(sta_updt_dt,ship_dt)) as max_status_date from {sp_table} 
+   where mkt_nm='{mkt_nm}' and medvntx_ind='N' and flex_1= 1586979
+    and ndc in {ndc} and rfrl_sta != "TRIAGED"
+    group by all
+    ) b on a.sp_pat_id=b.sp_pat_id """)
+triaged_pat.createOrReplaceTempView("triaged_pat")
+
+
+============================================================
+CMD 32 | type=auto | subtype=command
+============================================================
+spark.sql(f"""
+  SELECT  
+    COALESCE(a.referral_hcp_az_id) AS referral_hcp_az_id,
+    COALESCE(a.sp_pat_id, b.sp_pat_id, c.sp_pat_id) AS sp_pat_id,
+    COALESCE(a.referral_month, b.month, c.Month) AS referral_month,
+    COALESCE(a.denied_flag, 0) AS denied_flag,
+    COALESCE(a.abandoned_flag, 0) AS abandoned_flag,
+    COALESCE(a.pending_flag, 0) AS pending_flag,
+    COALESCE(a.approved_flag, 0) AS approved_flag,
+    COALESCE(b.discontinued_flag, 0) AS discontinued_flag,
+    COALESCE(c.triaged_flag, 0) AS triaged_flag
+  FROM  
+    (SELECT referral_hcp_az_id, sp_pat_id, referral_month, max_referral_dt,
+            case when SUM(denied_flag)>1 then 1 else sum(denied_flag) end AS denied_flag, 
+            case when SUM(abandoned_flag)>1 then 1 else sum(abandoned_flag) end AS abandoned_flag,
+            case when SUM(pending_flag)>1 then 1 else sum(pending_flag) end AS pending_flag, 
+            case when SUM(approved_flag)>1 then 1 else sum(approved_flag) end AS approved_flag
+     FROM us_commercial_catalog_prod.lgu_eplontersen.sp_metrics
+     WHERE cut_off = "fpj"
+     GROUP BY all) a
+  FULL JOIN  
+    (SELECT DISTINCT 
+    --az_cust_id, 
+    sp_pat_id, discontinued_flag, 
+                     DATE_TRUNC("MONTH", sta_updt_dt) AS Month  
+     FROM discontinued_pat
+     WHERE discontinued_flag = 1) b 
+  --ON a.referral_hcp_az_id = b.az_cust_id AND 
+  on a.sp_pat_id = b.sp_pat_id
+  FULL JOIN
+    (SELECT DISTINCT 
+    --az_cust_id, 
+    sp_pat_id, triaged_flag, 
+                     DATE_TRUNC("MONTH", sta_updt_dt) AS Month  
+     FROM triaged_pat
+     WHERE triaged_flag = 1) c
+  ON COALESCE(a.sp_pat_id, b.sp_pat_id) = c.sp_pat_id
+  --COALESCE(a.referral_hcp_az_id, b.az_cust_id) = c.az_cust_id AND 
+     
+""").createOrReplaceTempView("refr_base")
+
+============================================================
+CMD 33 | type=auto | subtype=command
+============================================================
+%sql
+select sum(discontinued_flag),sum(triaged_flag) from refr_base
+
+============================================================
+CMD 34 | type=auto | subtype=command
+============================================================
+sp=spark.sql(f"""
+select distinct u.*,d.diag_cd,sp.* except (referral_hcp_az_id,referral_month,sp_pat_id),
+PRIMARY_IDN_ID as idn_id, PRIMARY_IDN_Name as idn_name,
+demog.hcp_cust_name,region_name,district_name,terr_name,SP_Demand 
+from universe u 
+left join (
+  select * 
+  from refr_base) as  sp 
+on u.referral_hcp_az_id= sp.referral_hcp_az_id and u.referral_month = sp.referral_month and u.sp_pat_id=sp.sp_pat_id
+left join us_commercial_catalog_prod.lgu_eplontersen.d_idn_hcp_fctr_acct as b
+on u.referral_hcp_az_id=b.hcp_az_cust_id
+left join us_commercial_catalog_prod.lgu_eplontersen.d_hcp_specialty_dimension as demog 
+on u.referral_hcp_az_id = demog.hcp_az_cust_id
+full join (
+  select distinct az_cust_id,sp_pat_id, diag_cd,Month, sum(SP_demand_units) as SP_Demand 
+  from us_commercial_catalog_prod.lgu_eplontersen.sp_hcp_date
+  group by all) d 
+on u.referral_hcp_az_id=d.az_cust_id and u.sp_pat_id=d.sp_pat_id and u.referral_month=d.Month
+left join (
+  select distinct region_name,district_name,zip,terr_id,terr_name 
+  from {geo_table_name} 
+  where team in {geo_team}) geo 
+  on demog.zip= geo.zip  
+""")
+sp.createOrReplaceTempView("sp")
+
+============================================================
+CMD 35 | type=auto | subtype=command
+============================================================
+# %sql
+# -- This code was run to create a back up table for the previous version of the table
+# create or replace table us_commercial_catalog_prod.lgu_eplontersen.sp_referrals_demands_backup using delta as select * from us_commercial_catalog_prod.lgu_eplontersen.sp_referrals_demands
+
+============================================================
+CMD 36 | type=auto | subtype=command
+============================================================
+%md
+### 8.1 Output - Final SP Referrals and demand table
+
+============================================================
+CMD 37 | type=auto | subtype=command
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.sp_referrals_demands using delta as select * from sp
+
+============================================================
+CMD 38 | type=auto | subtype=command
+============================================================
+%md
+##9.FSIP Allocation
+
+============================================================
+CMD 39 | type=auto | subtype=command
+============================================================
+spark.sql(f""" create or replace table us_commercial_catalog_prod.lgu_eplontersen.fsip_alloc using delta as
+          select a.*,geo.terr_id,geo.terr_name,geo.region_name,geo.district_name  from  
+(select distinct a.az_cust_id,coalesce(alocn_typ_val,a.hca_zip) as zip,coalesce(pct_alocn,1.0) as allocation,a.month,a.wk_end_dt,a.sd_demand,a.sp_demand,a.total from
+(select az_cust_id,hca_zip,month,wk_end_dt,sum(sd_demand) as sd_demand,sum(sp_demand) as sp_demand,sum(total) as total  from us_commercial_catalog_prod.lgu_eplontersen.sd_sp_hcp_hca_idn
+GROUP BY ALL) a
+left join
+(select * from us_commercial_datalake_app_commons_prod.r_alloc_fsip
+where 
+-- team_nm in ('BBU_ATTR','BBU_ATTR_PR','BBU_ATTR_1A') 
+brd_nm = "WAINUA"
+and qrtr = "Q4 2025") b on a.az_cust_id = b.az_cust_id) a
+left join 
+(select distinct region_name,district_name,zip,terr_id,terr_name 
+  from {geo_table_name} where team in {geo_team}) geo 
+on a.zip = geo.zip """) 
+
+
+
+============================================================
+CMD 40 | type=auto | subtype=command
+============================================================
+spark.sql(f"""
+select distinct region_name,district_name,zip,terr_id,terr_name 
+  from {geo_table_name} where team in {geo_team} and zip=11232 """).display()
+
+============================================================
+CMD 41 | type=auto | subtype=command
+============================================================
+%sql
+select * from us_commercial_catalog_prod.lgu_eplontersen.fsip_alloc

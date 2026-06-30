@@ -1,0 +1,474 @@
+
+============================================================
+CELL 0 | markdown
+============================================================
+<h1> NSP Projection</h1>
+
+============================================================
+CELL 1 | markdown
+============================================================
+<h4>Tables Used:</h4>
+
+1. us_commercial_catalog_prod.lg_salestooutlets.outlet_sales_md_wkly_attr
+
+2. us_commercial_app_commons_prod.d_prod
+
+3. us_commercial_catalog_prod.lg_reference.hsat_hca_hca_affiliation
+
+4. us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors
+
+5. us_commercial_catalog_prod.lgu_eplontersen.prod_ndc_list
+
+============================================================
+CELL 2 | markdown
+============================================================
+# Elaad Base
+
+============================================================
+CELL 3 | code
+============================================================
+
+elaad=spark.sql("""
+          select * from us_commercial_catalog_prod.lgu_eplontersen.f_attr_treatment_repo_table_final
+          """)
+
+elaad.createOrReplaceTempView("elaad_base")
+
+============================================================
+CELL 4 | code
+============================================================
+%sql
+-- create or replace table us_commercial_catalog_prod.lgu_eplontersen.prod_ndc_list
+-- select * from us_commercial_catalog_prod.lgu_eplontersen.prod_ndc_list
+-- union
+-- select "00310940001" as NDC_CD,'1586979' as AZ_PROD_ID,'WAINUA AUTO INJECTOR 45MG/0.8ML' as PROD_NAME
+
+============================================================
+CELL 5 | code
+============================================================
+%sql
+-- create or replace table us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors_bck
+-- select * from us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors
+
+============================================================
+CELL 6 | code
+============================================================
+%sql
+
+-- Remove the code block once we confrim with prod nm and NDC
+-- create or replace table us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors
+-- select * from us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors
+-- union 
+-- select "WAINUA AUTO INJECTOR 45MG/0.8ML  9400-01" as prod_nm,"00310940001" as ndc_11_cd,
+-- 1.00000000 as Unit_Per_Claim_Factor,1.0 as Dosing_Frequency_Factor
+
+
+============================================================
+CELL 7 | markdown
+============================================================
+# NSP data
+
+============================================================
+CELL 8 | code
+============================================================
+
+NDC_Of_Interest = "'71336100301','00069197540','71336100001','00069197512','00069873001','00069873030','00310940001','00310942001'" 
+excluded_classes = "'DRUG','COMBINED','PROVIDER'"
+
+============================================================
+CELL 9 | code
+============================================================
+
+nsp_units_mnth = spark.sql(f"""
+select distinct ndc_11_cd,sls_dt,sum(nsp_prch_units) as nsp_units_mnth
+FROM us_commercial_app_commons_prod.f_sls_nsp_mth a
+left JOIN us_commercial_app_commons_prod.d_prod b 
+on a.az_prod_id=b.az_prod_id AND a.prod_lvl = b.prod_lvl
+WHERE ndc_11_cd IN (select distinct ndc_cd from us_commercial_catalog_prod.lgu_eplontersen.d_rx_codes_attr) 
+AND a.prod_lvl = 'CMF10' 
+and a.trade_class_desc not in ('DRUG','COMBINED','PROVIDER') 
+group by all
+order by 3,2 """)
+
+nsp_units_mnth.display()
+
+nsp_units_mnth.createOrReplaceTempView('nsp_units_mnth')
+
+============================================================
+CELL 10 | markdown
+============================================================
+##  Elaad Monthly Claim Count across NDC Code
+
+============================================================
+CELL 11 | code
+============================================================
+
+spark.sql("""
+          select ndc_cd,mnth,
+          case when ndc_cd in (select distinct ndc_cd from us_commercial_catalog_prod.lgu_patientiq.d_rx_codes_attr where prod_desc_lvl3 like '%VYNDAMAX%') then (claim_count*(day_supl/30)) -- To normalise Vyndamax and vyndaqel calims to 30 days 
+          else claim_count end as claim_cnt
+          from (
+          select ndc_cd, date_trunc('month', x2.month) AS mnth,day_supl,count(distinct claim_id_KEY) as claim_count from us_commercial_catalog_prod.lgu_eplontersen.f_attr_treatment_repo_table_final as x1
+          inner join us_commercial_catalog_prod.lgu_eplontersen.d_nsp_445_conversion as x2
+          on x1.wk_end_dt=x2.week_end 
+          group by all )
+          """).createOrReplaceTempView('elaad_1')
+
+============================================================
+CELL 12 | code
+============================================================
+spark.sql('''
+          select ndc_cd,mnth,sum(claim_cnt) as claim_count from elaad_1 
+            group by all
+          ''').createOrReplaceTempView('elaad')
+
+============================================================
+CELL 13 | markdown
+============================================================
+## DDD monthly roll up using 445 Calendar date
+
+============================================================
+CELL 14 | code
+============================================================
+spark.sql("""
+select distinct ndc_cd,date_trunc('month', x2.month) AS mnth,sum(units) as ddd_units 
+from us_commercial_catalog_prod.lg_salestooutlets.outlet_sales_md_wkly_attr as x1
+inner join us_commercial_catalog_prod.lgu_eplontersen.prod_ndc_list as x3 -- user static table created to map NDC to prod_name in DDD
+on x1.prod_name=x3.PROD_NAME
+inner join us_commercial_catalog_prod.lgu_eplontersen.d_nsp_445_conversion as x2
+on x1.week=x2.Week_End
+group by all
+""").createOrReplaceTempView("ddd_mnth_units")
+
+============================================================
+CELL 15 | markdown
+============================================================
+## Normalizing the DDD units with units per claim conversion factor 
+
+============================================================
+CELL 16 | code
+============================================================
+spark.sql("""
+          select ndc_cd,mnth,ddd_units,(ddd_units*x2.Unit_Per_Claim_Factor) as ddd_units_norm
+           from ddd_mnth_units as x1
+          inner join us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors as x2 -- table created for normalization
+          on x1.ndc_cd=x2.ndc_11_cd
+          group by all
+          """).createOrReplaceTempView('DDD_units_norm')
+
+============================================================
+CELL 17 | markdown
+============================================================
+## Applying units per claim factor to NSP Data
+
+============================================================
+CELL 18 | code
+============================================================
+spark.sql("""
+          select x1.*,(nsp_units_mnth*x2.Unit_Per_Claim_Factor) as nsp_units_norm from nsp_units_mnth as x1
+          inner join us_commercial_catalog_prod.lgu_eplontersen.d_nsp_ddd_conversion_factors as x2 -- table created for normalization
+          on x1.ndc_11_cd=x2.ndc_11_cd
+          """).createOrReplaceTempView("NSP_units_norm")
+
+============================================================
+CELL 19 | markdown
+============================================================
+## Creating the Dataframe for common months and NDC cd
+
+============================================================
+CELL 20 | code
+============================================================
+df1=spark.sql("""
+          select distinct NDC_CD from us_commercial_catalog_prod.lgu_eplontersen.prod_ndc_list
+          """)
+df2=spark.sql("""
+              select distinct date_trunc("MONTH",srvc_dt) as mnth from elaad_base
+              """)
+
+df1=df1.crossJoin(df2)
+df1.createOrReplaceTempView("common_tab")
+
+============================================================
+CELL 21 | markdown
+============================================================
+## Joining all the ELAAD , DDD and NSP to Common table created in above step
+
+============================================================
+CELL 22 | code
+============================================================
+spark.sql("""      
+select x1.ndc_cd,x1.mnth,claim_count,ddd_units,ddd_units_norm,nsp_units_mnth as nsp_units,nsp_units_norm
+from common_tab as x1
+left join elaad as x2
+on x1.ndc_cd=x2.ndc_cd and x1.mnth=x2.mnth
+left join DDD_units_norm as x3
+on x1.ndc_cd=x3.ndc_cd and x1.mnth=x3.mnth
+left join NSP_units_norm as x4
+on x1.ndc_cd=x4.ndc_11_cd and x1.mnth=x4.sls_dt
+order by mnth   
+""").createOrReplaceTempView('factor_base')
+
+============================================================
+CELL 23 | code
+============================================================
+%sql
+select * from factor_base
+
+============================================================
+CELL 24 | markdown
+============================================================
+## Rolling up to Brand family level and calculating the factors
+
+============================================================
+CELL 25 | code
+============================================================
+spark.sql('''
+         select *,(claim_count/ddd_units_norm) as elaad_ddd_fctr,(claim_count/nsp_units_norm) as elaad_nsp_fctr,
+(ddd_units_norm/nsp_units_norm) as ddd_nsp_fctr 
+ from (
+select mnth,prod_desc_lvl3 as prod_family,
+ sum(claim_count) as claim_count,sum(ddd_units_norm) as ddd_units_norm,sum(nsp_units_norm) as nsp_units_norm
+from factor_base as x1
+inner join (select distinct ndc_cd,prod_desc_lvl3 from us_commercial_catalog_prod.lgu_patientiq.d_rx_codes_attr) as x2
+on x1.ndc_cd=x2.ndc_cd
+group by all
+)
+          ''').createOrReplaceTempView('prjc_fin')
+
+
+============================================================
+CELL 26 | code
+============================================================
+%sql
+select * from prjc_fin
+
+============================================================
+CELL 27 | markdown
+============================================================
+## Setting a cap for factor. If factor >1 then its changed to 1
+
+============================================================
+CELL 28 | code
+============================================================
+fin_df=spark.sql('''
+  select 
+    mnth,
+    prod_family,
+    claim_count,
+    ddd_units_norm,
+    nsp_units_norm,
+  case
+    when elaad_ddd_fctr>1 then 1 else elaad_ddd_fctr
+  end as elaad_ddd_fctr,
+  case
+    when elaad_nsp_fctr>1 then 1 else elaad_nsp_fctr
+  end as elaad_nsp_fctr,
+  case 
+    when prod_family like "%VYNDA%" then 0.90
+    when prod_family like'%AMVUTTRA%' and mnth < "2024-02-01" then 0.55 -- change as per 1/04 suggestion
+    when prod_family like'%AMVUTTRA%' and mnth >= "2024-02-01" and mnth <="2025-03-01" then 0.85 -- changing to 0.85 for testing
+    when prod_family like'%AMVUTTRA%' and mnth >= "2025-04-01" then 0.80 -- As per Harshit request - 31 July 2025
+    when prod_family like '%ONPATTRO%' and mnth < "2024-02-01" then 0.6
+    when prod_family like '%ONPATTRO%' and mnth >= "2024-02-01" then 0.85 -- changing to 0.85 for testing
+    when prod_family like '%WAINUA%' then 1
+  end as blocking_fctr
+
+  from prjc_fin
+  ''')
+fin_df.createOrReplaceTempView('Final_NSP_projection_stg1')
+
+============================================================
+CELL 29 | code
+============================================================
+%sql
+select * from Final_NSP_projection_stg1
+where prod_family = "AMVUTTRA FAMILY" 
+order by mnth
+
+============================================================
+CELL 30 | markdown
+============================================================
+## Manual fix for onpattro and amvuttra from Sep'23 to feb'24 
+
+============================================================
+CELL 31 | code
+============================================================
+spark.sql("""
+          select mnth,prod_family,claim_count,ddd_units_norm,nsp_units_norm,elaad_ddd_fctr,
+          case when mnth >='2023-09-01' and mnth <'2024-02-01' and prod_family like '%AMVUTTRA%' then 0.7 -- change as per 1/04 suggestion
+               when mnth >='2023-09-01' and mnth <'2024-02-01' and prod_family like '%ONPATTRO%' then 0.83
+              else elaad_nsp_fctr end as elaad_nsp_fctr,
+              blocking_fctr
+           from Final_NSP_projection_stg1
+          """).createOrReplaceTempView('Final_NSP_projection')
+
+============================================================
+CELL 32 | markdown
+============================================================
+## partial month factor change
+
+============================================================
+CELL 33 | code
+============================================================
+adj_mnth=spark.sql("""
+select mnth from(select distinct mnth from Final_NSP_projection
+order by mnth DESC
+limit 12)
+where date(mnth) not in (Select date(mnth) from (select distinct sls_dt as mnth from nsp_units_mnth
+order by mnth DESC
+limit 12))
+""")
+adj_mnth_cnt=(adj_mnth.count()*-1)
+adj_mnth.createOrReplaceTempView('adj_mnth')
+
+
+============================================================
+CELL 34 | code
+============================================================
+%sql
+select * from adj_mnth
+
+============================================================
+CELL 35 | code
+============================================================
+%sql
+select mnth from(select distinct mnth from Final_NSP_projection
+order by mnth DESC
+limit 12)
+where date(mnth) not in (Select date(mnth) from (select distinct sls_dt as mnth from nsp_units_mnth
+order by mnth DESC
+limit 12))
+
+============================================================
+CELL 36 | code
+============================================================
+if adj_mnth.count()>0:
+  print("true")
+  
+  partial_mnth_flg=True
+
+  spark.sql("""
+            select * from Final_NSP_projection 
+      where mnth in (select mnth from adj_mnth)
+            """).createOrReplaceTempView('cur_mnth')
+            
+  spark.sql("""
+            select * from Final_NSP_projection 
+      where mnth = (select DATEADD(month,{mnth},DATE(date_trunc('month', max(srvc_dt)))) AS mnth from elaad_base)
+            """.format(mnth=adj_mnth_cnt)).createOrReplaceTempView('prev_mnth')
+  
+  factor_chnge_df=spark.sql("""
+      select distinct x1.mnth,x1.prod_family,x1.claim_count,x1.ddd_units_norm,x1.nsp_units_norm,x1.elaad_ddd_fctr,x2.elaad_nsp_fctr,x2.blocking_fctr from cur_mnth as x1
+      inner join prev_mnth as x2
+      on x1.prod_family=x2.prod_family
+      """)
+  
+  nsp_fctr=spark.sql("""
+                     select mnth,prod_family,claim_count,ddd_units_norm,nsp_units_norm,elaad_ddd_fctr,elaad_nsp_fctr,blocking_fctr from Final_NSP_projection 
+                     where mnth not in (select mnth from adj_mnth)
+                     """)
+  
+  nsp_fctr=nsp_fctr.union(factor_chnge_df)
+  nsp_fctr.createOrReplaceTempView('fin_nsp')
+  
+else:
+  spark.sql("""
+            select * from Final_NSP_projection
+            order by mnth DESC
+            """).createOrReplaceTempView("fin_nsp")
+
+============================================================
+CELL 37 | code
+============================================================
+%sql
+select * from fin_nsp
+
+============================================================
+CELL 38 | markdown
+============================================================
+## <--YET TO Implement-->Rolling 3 month factor
+
+============================================================
+CELL 39 | code
+============================================================
+# spark.sql("""
+# select *,(tot_claim/ddd_units_norm_v2) as elaad_ddd_fctr,(tot_claim/nsp_units_norm_v2) as elaad_nsp_fctr,
+# (ddd_units_norm_v2/nsp_units_norm_v2) as ddd_nsp_fctr  from factor_base
+#           """).createOrReplaceTempView('factor_fin')
+
+============================================================
+CELL 40 | code
+============================================================
+# factor_base=spark.sql('''
+                      
+#                         select 
+#                             mnth,
+#                             prod_desc_lvl3 as prod_family,
+#                             sum(claim_count) as claim_count,
+#                             sum(ddd_units_norm) as ddd_units_norm,
+#                             sum(nsp_units_norm) as nsp_units_norm
+#                         from factor_base as x1
+#                         inner join (select distinct ndc_cd,prod_desc_lvl3 from us_commercial_catalog_prod.lgu_patientiq.d_rx_codes_attr) as x2
+#                         on x1.ndc_cd=x2.ndc_cd
+#                         group by all
+                      
+#                       ''')
+
+============================================================
+CELL 41 | code
+============================================================
+# from pyspark.sql.functions import sum,dense_rank,avg
+# from pyspark.sql.window import Window
+
+# window_spec = (
+#     Window()
+#     .partitionBy('prod_family')
+#     .orderBy(factor_base['mnth'].cast('int'))
+#     .rowsBetween(-2, Window.currentRow)
+# )
+# rolling_sum_elaad = avg("claim_count").over(window_spec)
+# rolling_sum_ddd = avg("ddd_units_norm").over(window_spec)
+# rolling_sum_nsp = avg("nsp_units_norm").over(window_spec)
+
+# factor_base_r3m = factor_base.withColumn("claim_count_r3m", rolling_sum_elaad).withColumn("ddd_units_norm_r3m", rolling_sum_ddd).withColumn("nsp_units_norm_r3m", rolling_sum_nsp)
+# factor_base_r3m.display()
+
+============================================================
+CELL 42 | code
+============================================================
+# factor_base_r3m.createOrReplaceTempView('fctr_r3m')
+
+============================================================
+CELL 43 | markdown
+============================================================
+## Final factor table
+
+============================================================
+CELL 44 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.d_nsp_prjct_fctr using delta as
+select date_format(mnth,"yyyy-MM-dd") as mnth,prod_family,claim_count,ddd_units_norm,nsp_units_norm,elaad_ddd_fctr,elaad_nsp_fctr,blocking_fctr from fin_nsp
+
+============================================================
+CELL 45 | code
+============================================================
+# spark.sql('''
+#           create or replace table us_commercial_catalog_prod.lgu_eplontersen.d_nsp_prjct_fctr
+#           select date_format(mnth,"yyyy-MM-dd") as mnth,prod_family,claim_count,ddd_units_norm,nsp_units_norm,elaad_ddd_fctr,elaad_nsp_fctr,blocking_fctr from fin_nsp
+#           ''')
+
+============================================================
+CELL 46 | code
+============================================================
+%sql
+select mnth,sum(claim_count),sum(ddd_units_norm),sum(nsp_units_norm) from us_commercial_catalog_prod.lgu_eplontersen.d_nsp_prjct_fctr
+where prod_family = 'ATTRUBY FAMILY' and mnth >= '2024-06-01'
+group by all
+
+============================================================
+CELL 47 | code
+============================================================
+%sql
+select distinct mnth,elaad_ddd_fctr,elaad_nsp_fctr,blocking_fctr from us_commercial_catalog_prod.lgu_eplontersen.d_nsp_prjct_fctr
+where mnth >= '2024-06-01' and prod_family = "ATTRUBY FAMILY"

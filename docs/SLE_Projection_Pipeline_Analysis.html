@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SLE Projection Pipeline — Full Analysis</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px; line-height: 1.65; color: #1a1a1a; background: #f0f0f0; padding: 32px 16px;
+  }
+  .page { max-width: 1100px; margin: 0 auto; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 44px 52px; }
+
+  /* Typography */
+  h1 { font-size: 22px; font-weight: 700; color: #111; }
+  h2 { font-size: 16px; font-weight: 700; color: #111; margin-bottom: 14px; padding-bottom: 6px; border-bottom: 2px solid #111; margin-top: 0; }
+  h3 { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 8px; }
+  h4 { font-size: 12px; font-weight: 700; color: #555; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  p  { color: #444; margin-bottom: 8px; }
+  p:last-child { margin-bottom: 0; }
+  .subtitle { color: #777; font-size: 13px; }
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; background: #f3f4f6; padding: 1px 5px; border-radius: 3px; color: #333; }
+
+  /* Section spacing */
+  .section { margin-bottom: 40px; }
+  .section-num { font-size: 11px; font-weight: 700; color: #aaa; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid #e8e8e8; margin: 36px 0; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 4px; }
+  .stat-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 16px; text-align: center; }
+  .stat-value { font-size: 26px; font-weight: 700; color: #111; line-height: 1.1; }
+  .stat-value.green { color: #15803d; }
+  .stat-value.red   { color: #b91c1c; }
+  .stat-label { font-size: 11px; color: #888; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* Cards */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+  .card-head { background: #f7f7f7; border-bottom: 1px solid #e8e8e8; padding: 8px 14px; font-size: 12px; font-weight: 700; color: #333; display: flex; align-items: center; justify-content: space-between; }
+  .card-body { padding: 14px; }
+  .card-body p { font-size: 13px; }
+
+  /* Badges */
+  .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .badge-green  { background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; }
+  .badge-yellow { background:#fef9c3; color:#a16207; border:1px solid #fde68a; }
+  .badge-red    { background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; }
+  .badge-grey   { background:#f3f4f6; color:#6b7280; border:1px solid #e5e7eb; }
+  .badge-blue   { background:#dbeafe; color:#1d4ed8; border:1px solid #bfdbfe; }
+
+  /* Tables */
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table thead th { background:#f7f7f7; border:1px solid #e0e0e0; padding:8px 10px; text-align:left; font-weight:700; color:#333; white-space:nowrap; }
+  table tbody td { border:1px solid #e8e8e8; padding:8px 10px; vertical-align:top; color:#444; }
+  table tbody tr:nth-child(even) td { background:#fafafa; }
+  table tbody tr.gap td { background:#fffbeb; }
+
+  /* Callouts */
+  .callout { border-radius:6px; padding:13px 16px; margin-bottom:12px; border-left:4px solid; }
+  .callout:last-child { margin-bottom:0; }
+  .callout-title { font-weight:700; font-size:13px; margin-bottom:5px; }
+  .callout-body  { font-size:13px; color:#555; line-height:1.6; }
+  .callout-body ul { padding-left:18px; margin-top:6px; }
+  .callout-body li { margin-bottom:3px; }
+  .c-red    { background:#fff1f2; border-color:#f43f5e; }
+  .c-red    .callout-title { color:#be123c; }
+  .c-yellow { background:#fffbeb; border-color:#f59e0b; }
+  .c-yellow .callout-title { color:#b45309; }
+  .c-blue   { background:#eff6ff; border-color:#3b82f6; }
+  .c-blue   .callout-title { color:#1d4ed8; }
+  .c-green  { background:#f0fdf4; border-color:#22c55e; }
+  .c-green  .callout-title { color:#15803d; }
+  .c-grey   { background:#f9fafb; border-color:#9ca3af; }
+  .c-grey   .callout-title { color:#374151; }
+
+  /* Formula box */
+  .formula { background:#f8f9fa; border:1px solid #e0e0e0; border-radius:5px; padding:10px 14px; font-family:"SFMono-Regular",Consolas,monospace; font-size:12.5px; color:#222; margin:8px 0; white-space:pre-wrap; }
+
+  /* Step list */
+  .steps { list-style:none; padding:0; }
+  .steps li { display:flex; gap:12px; margin-bottom:12px; align-items:flex-start; }
+  .step-num { min-width:24px; height:24px; background:#111; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; margin-top:1px; }
+  .step-body { flex:1; }
+  .step-body strong { display:block; font-size:13px; margin-bottom:2px; }
+  .step-body span { font-size:12.5px; color:#666; }
+
+  /* Misc */
+  .muted { color:#777; font-size:12px; }
+  .bold  { font-weight:700; color:#111; }
+  .text-red { color:#b91c1c; font-weight:600; }
+  ul.dotlist { list-style:none; padding:0; }
+  ul.dotlist li { font-size:12.5px; color:#666; padding:2px 0; }
+  ul.dotlist li::before { content:"· "; }
+
+  @media print {
+    body { background:#fff; padding:0; }
+    .page { border:none; border-radius:0; padding:24px; max-width:100%; }
+  }
+  @media (max-width:720px) {
+    .stats,.grid-2,.grid-3 { grid-template-columns:1fr; }
+    .page { padding:20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Cover -->
+  <div class="section">
+    <h1>SLE Projection Pipeline — Full Technical Analysis</h1>
+    <p class="subtitle" style="margin-top:4px;">Scripts analyzed: 03.SLE_NSP_Factors &nbsp;·&nbsp; 01.Projected NBRx Patient Counts &nbsp;·&nbsp; 07.TRx Equivalence for SOB</p>
+    <p class="subtitle">Business logic reference: Book1.xlsx (13 process steps)</p>
+  </div>
+
+  <!-- Stats -->
+  <div class="section">
+    <div class="stats">
+      <div class="stat-card"><div class="stat-value">3</div><div class="stat-label">Notebooks</div></div>
+      <div class="stat-card"><div class="stat-value">11</div><div class="stat-label">Tables Traced</div></div>
+      <div class="stat-card"><div class="stat-value green">12/13</div><div class="stat-label">Excel Steps Verified</div></div>
+      <div class="stat-card"><div class="stat-value red">5</div><div class="stat-label">Issues / Gaps</div></div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Q1 -->
+  <div class="section">
+    <div class="section-num">Question 1</div>
+    <h2>What is the Projection Table?</h2>
+
+    <p>There is no single table called "the projection table." The pipeline produces <strong>two distinct output types</strong> depending on the use case:</p>
+
+    <div style="margin-top:16px;" class="grid-2">
+      <div class="card">
+        <div class="card-head">wkly_TRx_proj &nbsp;<span class="badge badge-blue">Primary Output</span></div>
+        <div class="card-body">
+          <p><strong>Created by:</strong> 07.TRx Equivalence for SOB</p>
+          <p style="margin-top:6px;" class="muted">The final projected TRx volume — how many equivalent treatment units (Benlysta IV, Benlysta SC, Saphnelo) were dispensed each week at NSP-equivalent scale. This is what gets used in SOB dashboards and share calculations.</p>
+          <div class="formula">TRx = DDD_units_eq × SLE_fctr × NSP_Factor_wkly
+(rounded to nearest integer, per product per week)</div>
+          <p class="muted">Table: <code>us_commercial_catalog_prod.LGU_LUPUS.wkly_TRx_proj</code></p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">SOB_PROJECTION_FACTOR_* &nbsp;<span class="badge badge-grey">Scaling Factors</span></div>
+        <div class="card-body">
+          <p><strong>Created by:</strong> 01.Projected NBRx Patient Counts</p>
+          <p style="margin-top:6px;" class="muted">Four factor tables (weekly + monthly × form-level + product-level) that answer: "For every 1 MG of drug observed in eLAAD claims, how many MG were actually sold in the market (DDD)?" Used to scale eLAAD patient counts to total market size.</p>
+          <div class="formula">PROJ_FACTOR = rolling_avg(DDD_SLE_MG) / rolling_avg(LAAD_MG)
+Weekly = 5-week rolling average
+Monthly = 3-month rolling average</div>
+          <p class="muted">4 tables: <code>SOB_PROJECTION_FACTOR_WEEKLY</code>, <code>_TOT_WEEKLY</code>, <code>_MONTHLY</code>, <code>_TOT_MONTHLY</code></p>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;" class="callout c-grey">
+      <div class="callout-title">Key difference between the two</div>
+      <div class="callout-body"><code>wkly_TRx_proj</code> applies <strong>both</strong> the SLE factor and the NSP factor to get actual projected TRx numbers. The <code>SOB_PROJECTION_FACTOR_*</code> tables apply <strong>only</strong> the SLE factor to the DDD/LAAD ratio — the NSP factor is NOT included in those factors. See Issue #3 for the implication.</div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Q2 -->
+  <div class="section">
+    <div class="section-num">Question 2</div>
+    <h2>All Intermediate Tables That Feed Into the Projection Tables</h2>
+
+    <h3 style="margin-bottom:10px;">Pipeline A — wkly_TRx_proj (from 07.TRx Equivalence for SOB)</h3>
+    <table style="margin-bottom:20px;">
+      <thead>
+        <tr><th style="width:200px;">Table</th><th style="width:220px;">Created by</th><th>Contents / Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="bold">outlet_sales_md_wkly_anifro</td><td class="muted">IQVIA (external source)</td><td>Raw weekly DDD units per product per outlet. Base volume input.</td></tr>
+        <tr><td class="bold">sle_fctr_wkly_eLAAD</td><td>01.Projected NBRx (creates) + 03.SLE_NSP (refreshes NSP col)</td><td>SLE patient proportion factor (SLE_fctr) + NSP_Factor_wkly per week. 07.TRx reads only SLE_fctr from this table — the NSP_Factor_wkly column in this table is NOT used by 07.TRx.</td></tr>
+        <tr class="gap"><td class="bold text-red">NBRX_MTHLY_WKLY_PROJ</td><td class="text-red">UNKNOWN — not in any shared script</td><td>NSP weekly factor lookup: Week_Mnth_dt + Product + NSP_Factor_wkly. This is the actual NSP factor source used by 07.TRx. Origin is untraced — a missing notebook creates it. See Issue #1.</td></tr>
+      </tbody>
+    </table>
+
+    <h3 style="margin-bottom:10px;">Pipeline B — SOB_PROJECTION_FACTOR_WEEKLY (from 01.Projected NBRx Patient Counts)</h3>
+    <table>
+      <thead>
+        <tr><th style="width:200px;">Table</th><th style="width:220px;">Created by</th><th>Contents / Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="bold">outlet_sales_md_wkly_anifro</td><td class="muted">IQVIA (external)</td><td>Raw weekly DDD units. Converted to DDD_MG using mg_strength extracted from prod_name.</td></tr>
+        <tr><td class="bold">DDD_wkly</td><td>01.Projected NBRx</td><td>Processed weekly DDD in MG, with Channel (RETAIL/NON_RETAIL) and product_form (IV/SC) flags. Benlysta SC Retail multiplied by 1.2 hardcoded factor.</td></tr>
+        <tr><td class="bold">DDD_wkly_ben_split</td><td>01.Projected NBRx</td><td>IV/SC proportion split for Benlysta Non-Retail by week. Used to apportion the combined eLAAD Non-Retail Benlysta volume into IV and SC.</td></tr>
+        <tr><td class="bold">sle_fctr_wkly_eLAAD</td><td>01.Projected NBRx (creates SLE_fctr) + 03.SLE_NSP (refreshes NSP col)</td><td>SLE_fctr = (tot_pat − LN_pat − Other_pat) / tot_pat [BENLYSTA]; 1.0 [SAPHNELO]. Only SLE_fctr column is used in the projection factor calculation.</td></tr>
+        <tr><td class="bold">kwxc045_immunology_bagging_table</td><td class="muted">eLAAD pipeline (upstream)</td><td>Patient-level eLAAD claims — provides LAAD_MG (observed drug volume in claims). Benlysta Non-Retail is split by IV/SC using DDD proportions before the ratio is computed.</td></tr>
+        <tr><td class="bold">DDD 445 Calendar.csv</td><td class="muted">Static S3 file</td><td>Maps each week-end date to its fiscal month (4-4-5 calendar). Used to roll up weekly DDD to monthly for the monthly projection factor path.</td></tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:14px;">
+      <h3 style="margin-bottom:10px;">Full lineage diagram</h3>
+      <div style="background:#f8f9fa; border:1px solid #e0e0e0; border-radius:5px; padding:16px; font-family:monospace; font-size:12px; line-height:1.8; overflow-x:auto;">
+f_sls_nsp_mth ───────────────────────────────┐<br/>
+                                              ▼<br/>
+outlet_sales_md_mntly ───► [03.SLE_NSP] ───► NSP_mthly_fact<br/>
+kxwj051_445_calendar ──────────────────────► NSP_wkly_fact  ─────────────────┐<br/>
+                                              │                                │ (refreshes NSP col)<br/>
+kwxc045_immunology_bagging_table_all_pat ─► [01.NBRx] ──► sle_fctr_wkly_eLAAD ◄┘<br/>
+                                              │<br/>
+outlet_sales_md_wkly_anifro ─────────────► DDD_wkly<br/>
+DDD_wkly ────────────────────────────────► DDD_wkly_ben_split<br/>
+                                              │<br/>
+DDD_wkly + sle_fctr_wkly_eLAAD (SLE_fctr only) + kwxc045_immunology_bagging_table (LAAD_MG)<br/>
+   └─────────────────────────────────────────► SOB_PROJECTION_FACTOR_WEEKLY ✅<br/>
+                                                    (and TOT_WEEKLY, MONTHLY, TOT_MONTHLY)<br/>
+<br/>
+───────────────────── Pipeline B (07.TRx) ─────────────────────────────────────<br/>
+<br/>
+outlet_sales_md_wkly ──► unit_convert ──► × SLE_fctr (sle_fctr_wkly_eLAAD)<br/>
+                                              × NSP_Factor_wkly (NBRX_MTHLY_WKLY_PROJ ← ? UNKNOWN ORIGIN)<br/>
+                                              └─────────────────────────────────► wkly_TRx_proj ✅
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Q3 -->
+  <div class="section">
+    <div class="section-num">Question 3</div>
+    <h2>Verification — Every Excel Step vs. Code</h2>
+    <p style="margin-bottom:14px;" class="muted">Source: Book1.xlsx, Sheet1 — 13 process steps for NSP Factor calculation in 03.SLE_NSP_Factors</p>
+
+    <table>
+      <thead>
+        <tr><th style="width:36px;">#</th><th style="width:72px;">Result</th><th style="width:28%;">Excel Rule</th><th style="width:30%;">Code (03.SLE_NSP_Factors)</th><th>Verification Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Extract NSP from <code>f_sls_nsp_mth</code>. Filter to az_prod_id in market (from product master). Only <code>trade_class_desc = 'COMBINED'</code>.</td>
+          <td><code>SELECT ... FROM f_sls_nsp_mth WHERE trade_class_desc='COMBINED'</code> with az_prod_id filter for Saphnelo (1441709), Benlysta IDs (650912, 650924, 877743).</td>
+          <td>Matches. COMBINED filter is hardcoded as documented in Excel. Product IDs align with product master config.</td>
+        </tr>
+        <tr>
+          <td>2</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Convert NSP eaches → units_eq using multipliers: Saphnelo ×1.0, BEN IV 400mg ×0.4716, BEN IV 120mg ×0.1415, BEN SC ×0.25.</td>
+          <td><code>CASE WHEN az_prod_id='1441709' THEN eaches*1 WHEN '650912' THEN eaches*0.4716 WHEN '650924' THEN eaches*0.1415 WHEN '877743' THEN eaches*0.25 END</code></td>
+          <td>All 4 product IDs and all 4 multipliers match exactly.</td>
+        </tr>
+        <tr>
+          <td>3</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Aggregate NSP volume: SUM(units_eq) grouped by yr_mnth and brand.</td>
+          <td><code>Table2 = SELECT yr_mnth, Product, SUM(units_eq) GROUP BY yr_mnth, Product</code></td>
+          <td>Matches. Grouping is correct.</td>
+        </tr>
+        <tr>
+          <td>4</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Nov-2024 anomaly: IQVIA pre-applies 80% normalization to 5-week month. Reverse it by dividing by 0.8 only for yr_mnth = '2024-11'.</td>
+          <td><code>withColumn('units_eq', when(col('yr_mnth')=='2024-11', col('units_eq')/0.8).otherwise(col('units_eq')))</code></td>
+          <td>Matches. Applied BEFORE aggregation in <code>Table2</code>, only for 2024-11. Division by 0.8 is the correct reversal of the 80% factor.</td>
+        </tr>
+        <tr>
+          <td>5</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Extract DDD monthly from <code>outlet_sales_md_mntly_anifro</code>. Filter by az_prod_id from config.</td>
+          <td><code>SELECT ... FROM outlet_sales_md_mntly_anifro WHERE prod_id IN ('1335526','1335669','1335620','1335822','1438251')</code></td>
+          <td>Matches. All 5 DDD product IDs covered (4 Benlysta + 1 Saphnelo).</td>
+        </tr>
+        <tr>
+          <td>6</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Convert DDD units: Saphnelo ×1.0, BEN IV 400mg ×0.4716, BEN IV 120mg ×0.1415, BEN SC 200mg ×0.25, BEN SC Autoinjector ×0.25.</td>
+          <td><code>CASE WHEN prod_id='1438251' THEN units*1 WHEN '1335526' THEN units*0.4716 WHEN '1335669' THEN units*0.1415 WHEN '1335620' THEN units*0.25 WHEN '1335822' THEN units*0.25</code></td>
+          <td>Matches. Excel documents 5 DDD SKUs; code handles all 5. BEN SC Autoinjector (1335822) correctly uses same ×0.25 multiplier as BEN SC 200mg (1335620).</td>
+        </tr>
+        <tr>
+          <td>7</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Aggregate DDD volume: SUM(units_eq) grouped by yr_mnth and brand.</td>
+          <td><code>Table12 = SELECT yr_mnth, Product, SUM(units_eq) GROUP BY yr_mnth, Product</code></td>
+          <td>Matches.</td>
+        </tr>
+        <tr>
+          <td>8</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Compute monthly NSP factor: NSP_Factor_mthly = NSP_units_eq / DDD_units_eq per month and brand.</td>
+          <td><code>Table31: A.units_eq / B.units_eq AS NSP_Factor_mthly — Table2 RIGHT JOIN Table12 ON yr_mnth AND Product</code></td>
+          <td>Matches formula. <strong>RIGHT JOIN</strong> on DDD (Table12) keeps all DDD months even when NSP data is absent — correct behaviour for gap-filling.</td>
+        </tr>
+        <tr>
+          <td>9</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Fill gaps for missing NSP months: COALESCE(current_factor, most_recent_factor). Full grid of all months × all brands created first.</td>
+          <td>3-step pattern: <code>Table32</code> (full month×brand grid) → <code>Table33</code> (left join actual factors) → <code>Table34</code> (<code>COALESCE(NSP_Factor_mthly, Most_Recent_Factor)</code>)</td>
+          <td>Matches. <code>Most_Recent_Factor</code> = factor from <code>MAX(yr_mnth)</code> in Table31. <strong>Note (Excel open question):</strong> ALL future missing months receive the SAME single latest factor. If market trends up/down, this may not be representative — consider using a rolling average for the gap fill instead.</td>
+        </tr>
+        <tr>
+          <td>10</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Build week-to-month mapping: join <code>outlet_sales_md_wkly_anifro</code> with 4-4-5 calendar (<code>kxwj051_445_calendar</code>) to map each week-end date to its fiscal month.</td>
+          <td><code>WeekMonthMapping = SELECT week, SUBSTRING(Month,1,7) AS yr_mnth FROM outlet_sales_md_wkly_anifro d LEFT JOIN kxwj051_445_calendar c ON d.week = c.week_end</code></td>
+          <td>Matches. Uses Unity Catalog 445 table (<code>kxwj051_445_calendar</code>). Note: 01.Projected NBRx uses a different source for the same calendar (static S3 CSV) — see Issue #5.</td>
+        </tr>
+        <tr>
+          <td>11</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Spread monthly factor to weeks: every week inherits the NSP factor of its parent fiscal month.</td>
+          <td><code>SELECT B.week, A.Product, A.NSP_Factor_mthly AS NSP_Factor_wkly FROM Table34 A LEFT JOIN WeekMonthMapping B ON A.yr_mnth = B.yr_mnth</code></td>
+          <td>Matches. Weekly factor = monthly factor. No separate weekly NSP/DDD calculation is performed (correct as documented).</td>
+        </tr>
+        <tr>
+          <td>12</td><td><span class="badge badge-grey">N/A</span></td>
+          <td colspan="3" class="muted">Step 12 is absent from the Excel sheet — intentional numbering gap between step 11 and step 13.</td>
+        </tr>
+        <tr>
+          <td>13</td><td><span class="badge badge-green">Pass</span></td>
+          <td>Refresh NSP column on weekly SLE table. Combine monthly and weekly NSP factors back into the eLAAD factor tables.</td>
+          <td>Load <code>sle_fctr_wkly_eLAAD</code> → drop <code>NSP_Factor_wkly</code> col → LEFT JOIN <code>NSP_wkly_fact</code> on product+week_end+IV_SC_Cat → saveAsTable (overwrite). Same for monthly.</td>
+          <td>Matches. The product naming bridge (<code>BENLYSTA IV → product_name='BENLYSTA', IV_SC_Cat='IV'</code>) is correctly applied for the join. <strong>However:</strong> this refresh has no downstream effect on 07.TRx — see Issue #1.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:16px;" class="callout c-green">
+      <div class="callout-title">Verdict: All 12 verifiable Excel steps are correctly implemented</div>
+      <div class="callout-body">Every multiplier, filter condition, gap-fill logic, calendar join, and product naming transformation in the Excel documentation matches the actual code in 03.SLE_NSP_Factors. The Nov-2024 IQVIA calendar adjustment is correctly applied before aggregation, not after.</div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Q4 -->
+  <div class="section">
+    <div class="section-num">Question 4</div>
+    <h2>Gaps and Issues Found</h2>
+
+    <!-- Issue 1 -->
+    <div class="callout c-red">
+      <div class="callout-title">[CRITICAL — Issue 1] NBRX_MTHLY_WKLY_PROJ: origin unknown and pipeline is disconnected</div>
+      <div class="callout-body">
+        <p>This is the most important issue in the entire pipeline.</p>
+        <ul>
+          <li><code>03.SLE_NSP_Factors</code> creates <code>NSP_wkly_fact</code> with column <strong>week</strong> and also refreshes <code>sle_fctr_wkly_eLAAD.NSP_Factor_wkly</code>.</li>
+          <li><code>07.TRx Equivalence for SOB</code> reads NSP factors from <code>NBRX_MTHLY_WKLY_PROJ</code> with column <strong>Week_Mnth_dt</strong>.</li>
+          <li>These are <strong>two different tables with different column names</strong>. NBRX_MTHLY_WKLY_PROJ is not created by any of the shared scripts.</li>
+          <li><strong>Consequence:</strong> When 03.SLE_NSP_Factors runs and updates NSP factors, those updates never reach 07.TRx. The wkly_TRx_proj is computed using potentially <strong>stale NSP factors</strong> from an unknown source.</li>
+          <li><strong>Action required:</strong> Identify which notebook creates NBRX_MTHLY_WKLY_PROJ. Then either (a) update 07.TRx to read from NSP_wkly_fact (rename column in SQL), or (b) make 03.SLE_NSP_Factors also write to NBRX_MTHLY_WKLY_PROJ under the expected schema.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Issue 2 -->
+    <div class="callout c-red">
+      <div class="callout-title">[CRITICAL — Issue 2] NSP factor is excluded from the SOB_PROJECTION_FACTOR calculation</div>
+      <div class="callout-body">
+        <p><code>sle_fctr_wkly_eLAAD</code> has two factor columns: <code>SLE_fctr</code> and <code>NSP_Factor_wkly</code>. In 01.Projected NBRx, the projection factor computation only reads <code>SLE_fctr</code>:</p>
+        <div class="formula" style="margin:8px 0;">SELECT week_end, product_name, IV_SC_Cat AS product_form, SLE_fctr FROM sle_fctr_wkly_eLAAD</div>
+        <p>The <code>NSP_Factor_wkly</code> column in <code>sle_fctr_wkly_eLAAD</code> is <strong>never used</strong> in any projection factor computation.</p>
+        <p style="margin-top:6px;"><strong>Consequence:</strong> <code>SOB_PROJECTION_FACTOR_WEEKLY</code> = rolling(DDD × SLE_fctr) / rolling(LAAD_MG) — this ratio is in DDD-scale, not NSP-scale. If downstream consumers multiply eLAAD patient counts by this factor expecting NSP-scale projections, they will be off by the NSP/DDD ratio. The 07.TRx pipeline avoids this by applying NSP factor directly to DDD before computing TRx. <strong>Clarify with team lead whether this is intentional design.</strong></p>
+      </div>
+    </div>
+
+    <!-- Issue 3 -->
+    <div class="callout c-yellow">
+      <div class="callout-title">[HIGH — Issue 3] mnthly_TRx_proj never saved to a permanent table</div>
+      <div class="callout-body">
+        <p>The monthly TRx projection is computed in 07.TRx as <code>NSP_Units_grouped</code> (alias <code>mnthly_Trx</code>) but is only a Spark temporary view — it is <strong>never written to a Delta table</strong>. Only <code>wkly_TRx_proj</code> is persisted.</p>
+        <p style="margin-top:4px;">Any dashboard or downstream process expecting monthly TRx projection data will find no permanent table. This should either be explicitly saved (<code>.write.format("delta").saveAsTable("LGU_LUPUS.mnthly_TRx_proj")</code>) or documented as intentionally transient.</p>
+      </div>
+    </div>
+
+    <!-- Issue 4 -->
+    <div class="callout c-yellow">
+      <div class="callout-title">[MEDIUM — Issue 4] Duplicate union doubles Benlysta historical NSP data (masked bug)</div>
+      <div class="callout-body">
+        <p>In 07.TRx Equivalence for SOB (line ~319):</p>
+        <div class="formula">comp_nsp = ben_nsp.union(latest_nsp).union(latest_nsp).distinct()</div>
+        <p><code>latest_nsp</code> is unioned <strong>twice</strong>. The <code>.distinct()</code> at the end removes the duplicates, so the final output is correct. However, this doubles the intermediate dataset size before deduplication, wasting Spark resources. More critically, if <code>.distinct()</code> is ever removed (e.g., during a refactor), Saphnelo and Benlysta volumes will <strong>double</strong>, corrupting the monthly TRx projection. Should be fixed to a single <code>.union(latest_nsp)</code>.</p>
+      </div>
+    </div>
+
+    <!-- Issue 5 -->
+    <div class="callout c-blue">
+      <div class="callout-title">[LOW — Issue 5] Two separate 445 calendar sources — risk of divergence</div>
+      <div class="callout-body">
+        <ul>
+          <li><code>03.SLE_NSP_Factors</code> uses <code>kxwj051_445_calendar</code> (Unity Catalog, managed)</li>
+          <li><code>01.Projected NBRx Patient Counts</code> uses <code>DDD 445 Calendar.csv</code> (static S3 file at <code>s3://az-us-lg-pilot-user/hive/lgu_lupus/...</code>)</li>
+        </ul>
+        <p style="margin-top:6px;">These are the same calendar but maintained separately. If the fiscal year rolls over and the Unity Catalog table is updated but the S3 CSV is not (or vice versa), week-to-month mappings will differ between the two pipelines, causing inconsistent monthly aggregations. <strong>Recommendation:</strong> Consolidate <code>01.Projected NBRx</code> to use the Unity Catalog table.</p>
+      </div>
+    </div>
+
+    <!-- Open questions from Excel -->
+    <div style="margin-top:8px;" class="callout c-grey">
+      <div class="callout-title">Open Questions from Excel (Book1.xlsx annotations)</div>
+      <div class="callout-body">
+        <ul>
+          <li><strong>"What should be used as recent factor to fill NSP missing gaps?"</strong> — Current code uses the factor from <code>MAX(yr_mnth)</code> in Table31 (the single most recent computed month). All future missing months get this same value. If the factor is trending, this will introduce bias. Consider using a 3-month rolling average of computed factors instead.</li>
+          <li><strong>"When is NSP missing? What's the lag?"</strong> — Not explicitly documented in the code. IQVIA NSP data typically lags 4–6 weeks, meaning the most recent 1–2 months in the DDD data will not have a matching NSP factor and will be filled. The code handles this silently without logging which months were filled or from which source month.</li>
+          <li><strong>"Cross check with leads for standardization"</strong> (Nov-2024 adjustment) — Verified: correctly implemented as <code>units_eq / 0.8</code> only for <code>yr_mnth = '2024-11'</code>.</li>
+          <li><strong>"Check calendar creation"</strong> — Calendar is correctly built from <code>kxwj051_445_calendar</code> in 03.SLE_NSP_Factors. But see Issue #5 regarding the duplicate S3 calendar in 01.Projected NBRx.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <hr />
+
+  <!-- Summary table -->
+  <div class="section">
+    <h2>Complete Table Lineage Summary</h2>
+    <table>
+      <thead>
+        <tr><th style="width:72px;">Status</th><th style="width:200px;">Table</th><th style="width:220px;">Source Notebook</th><th style="width:220px;">Key Inputs</th><th>Core Formula</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">NSP_mthly_fact</td><td>03.SLE_NSP_Factors</td><td>f_sls_nsp_mth + outlet_sales_md_mntly</td><td>NSP_units_eq / DDD_units_eq per month+product</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">NSP_wkly_fact</td><td>03.SLE_NSP_Factors</td><td>NSP_mthly_fact + kxwj051_445_calendar</td><td>NSP_Factor_mthly copied to each week in fiscal month</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">sle_fctr_wkly_eLAAD</td><td>01.Projected NBRx (creates) + 03.SLE_NSP (refreshes)</td><td>kwxc045_immunology_bagging_table_all_pat → NSP_wkly_fact</td><td>SLE_fctr = (tot−LN−Other)/tot [BEN]; 1.0 [SAPH]</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">sle_fctr_mnthly_eLAAD</td><td>01.Projected NBRx (creates) + 03.SLE_NSP (refreshes)</td><td>Same as above, monthly grain</td><td>Same SLE_fctr formula, monthly grain</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">DDD_wkly</td><td>01.Projected NBRx Patient Counts</td><td>outlet_sales_md_wkly_anifro + DDD 445 Calendar.csv</td><td>DDD_MG = units × mg_strength; BEN SC RETAIL × 1.2</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">DDD_wkly_ben_split</td><td>01.Projected NBRx Patient Counts</td><td>DDD_wkly</td><td>IV_proportion = BEN_IV_MG / (IV+SC); SC_proportion = 1 − IV_proportion</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">SOB_PROJECTION_FACTOR_WEEKLY</td><td>01.Projected NBRx Patient Counts</td><td>DDD_wkly + sle_fctr_wkly_eLAAD + kwxc045_immunology_bagging_table</td><td>rolling5wk(DDD×SLE_fctr) / rolling5wk(LAAD_MG); BEN cap 1–4; SAPH floor 1</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">SOB_PROJECTION_FACTOR_TOT_WEEKLY</td><td>01.Projected NBRx Patient Counts</td><td>SOB_PROJECTION_FACTOR_WEEKLY</td><td>Product-level aggregation (IV+SC combined)</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">SOB_PROJECTION_FACTOR_MONTHLY</td><td>01.Projected NBRx Patient Counts</td><td>DDD_mnthly + sle_fctr_mnthly_eLAAD + eLAAD</td><td>rolling3mth(DDD×SLE_fctr) / rolling3mth(LAAD_MG); same guardrails</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">SOB_PROJECTION_FACTOR_TOT_MONTHLY</td><td>01.Projected NBRx Patient Counts</td><td>SOB_PROJECTION_FACTOR_MONTHLY</td><td>Product-level aggregation</td></tr>
+        <tr><td><span class="badge badge-green">Traced</span></td><td class="bold">wkly_TRx_proj</td><td>07.TRx Equivalence for SOB</td><td>outlet_sales_md_wkly + sle_fctr_wkly_eLAAD + NBRX_MTHLY_WKLY_PROJ</td><td>DDD_eq × SLE_fctr × NSP_Factor_wkly → rounded TRx</td></tr>
+        <tr class="gap"><td><span class="badge badge-red">GAP</span></td><td class="bold text-red">NBRX_MTHLY_WKLY_PROJ</td><td class="text-red">UNKNOWN — missing script</td><td>?</td><td>Supplies NSP_Factor_wkly via Week_Mnth_dt column — not created by any shared notebook</td></tr>
+        <tr class="gap"><td><span class="badge badge-yellow">GAP</span></td><td class="bold">mnthly_TRx_proj</td><td>07.TRx Equivalence for SOB (in-memory only)</td><td>complete_nsp_units_mthly + sle_fctr_mnthly_eLAAD</td><td>NSP_units_eq × SLE_fctr → monthly TRx — never persisted to Delta</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr />
+
+  <!-- Issue action list -->
+  <div class="section">
+    <h2>Recommended Actions</h2>
+    <ul class="steps">
+      <li>
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Identify the notebook that creates NBRX_MTHLY_WKLY_PROJ</strong>
+          <span>Search for all Databricks notebooks in the LGU_LUPUS workspace that write to this table. Once found, verify its NSP factors are equivalent to NSP_wkly_fact. Update 07.TRx to read from NSP_wkly_fact directly (change column name from Week_Mnth_dt → week in the SQL).</span>
+        </div>
+      </li>
+      <li>
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Decide: should SOB_PROJECTION_FACTOR include the NSP factor?</strong>
+          <span>Confirm with the team whether 01.Projected NBRx projection factors should be computed on NSP-scale or DDD-scale. If NSP-scale is required, add NSP_Factor_wkly to the DDD_SLE_MG calculation before computing the ratio.</span>
+        </div>
+      </li>
+      <li>
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Persist mnthly_TRx_proj to a permanent Delta table</strong>
+          <span>Add a <code>.write.format("delta").saveAsTable("LGU_LUPUS.mnthly_TRx_proj")</code> call in 07.TRx after NSP_Units_grouped is computed.</span>
+        </div>
+      </li>
+      <li>
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <strong>Fix the duplicate union in 07.TRx (line ~319)</strong>
+          <span>Change <code>ben_nsp.union(latest_nsp).union(latest_nsp).distinct()</code> to <code>ben_nsp.union(latest_nsp).distinct()</code>.</span>
+        </div>
+      </li>
+      <li>
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <strong>Consolidate 445 calendar to Unity Catalog in 01.Projected NBRx</strong>
+          <span>Replace the S3 CSV read with <code>spark.table('us_commercial_catalog_prod.lgu_lupus.kxwj051_445_calendar')</code> to use the same calendar source as 03.SLE_NSP_Factors.</span>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align:center; margin-top:32px; padding-top:16px; border-top:1px solid #e8e8e8;">
+    <p style="font-size:11px; color:#aaa;">SLE Projection Pipeline Analysis · Generated from vibe-match project · Open in any browser</p>
+  </div>
+
+</div>
+</body>
+</html>

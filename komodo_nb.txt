@@ -1,0 +1,281 @@
+
+============================================================
+CELL 0 | markdown
+============================================================
+## External Processing of enrollment data 
+
+============================================================
+CELL 1 | markdown
+============================================================
+### MX **and** RX enrollment
+
+============================================================
+CELL 2 | code
+============================================================
+%sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_am AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where mdcl_claim_cls = True and phcy_claim_cls = True 
+
+
+============================================================
+CELL 3 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_am AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_am
+
+============================================================
+CELL 4 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_am AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_am
+
+============================================================
+CELL 5 | markdown
+============================================================
+### Mx or Rx Enrollment
+
+============================================================
+CELL 6 | code
+============================================================
+ %sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_or AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where mdcl_claim_cls = True or phcy_claim_cls = True 
+
+
+============================================================
+CELL 7 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_or AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_or
+
+============================================================
+CELL 8 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_or AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_or
+
+============================================================
+CELL 9 | markdown
+============================================================
+### Mx Only Enrollment
+
+============================================================
+CELL 10 | code
+============================================================
+%sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_mx_only AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where mdcl_claim_cls = True and phcy_claim_cls = False 
+
+
+============================================================
+CELL 11 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_mx_only AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_mx_only
+
+============================================================
+CELL 12 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_mx_only AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_mx_only
+
+============================================================
+CELL 13 | markdown
+============================================================
+### Rx Only Enrollment
+
+============================================================
+CELL 14 | code
+============================================================
+%sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_rx_only AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where mdcl_claim_cls = False and phcy_claim_cls = True
+
+
+============================================================
+CELL 15 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_rx_only AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_rx_only
+
+============================================================
+CELL 16 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_rx_only AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_rx_only
+
+============================================================
+CELL 17 | markdown
+============================================================
+### Mx Enrollment
+
+============================================================
+CELL 18 | code
+============================================================
+%sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_mx AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where mdcl_claim_cls = True 
+
+
+============================================================
+CELL 19 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_mx AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_mx
+
+============================================================
+CELL 20 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_mx AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_mx
+
+============================================================
+CELL 21 | markdown
+============================================================
+### Rx Enrollment
+
+============================================================
+CELL 22 | code
+============================================================
+%sql
+
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_rx AS 
+  SELECT pat_id, 
+         to_date(eligy_strt_dt) as eligy_strt_dt,
+         to_date(eligy_end_dt)  as eligy_end_dt, 
+         
+         lag(to_date(eligy_end_dt), 1) OVER (PARTITION BY pat_id ORDER BY eligy_strt_dt, eligy_end_dt) as prev_eligy_end_dt, 
+         datediff(eligy_strt_dt, prev_eligy_end_dt) as gap,
+
+        case
+          when prev_eligy_end_dt is null then 0
+          when datediff(eligy_strt_dt, prev_eligy_end_dt) <= 45 then 0
+          else 1
+        end as qualified_gap_flag        
+  FROM us_commercial_catalog_prod.lg_claim.d_claim_pat_enrlt_komodo_attr_v
+  where phcy_claim_cls = True
+
+
+============================================================
+CELL 23 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_rx AS 
+  select *,
+         sum(qualified_gap_flag) over (partition by pat_id order by eligy_strt_dt, eligy_end_dt rows between unbounded preceding and current row) as enrollment_episode
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_0_rx
+
+============================================================
+CELL 24 | code
+============================================================
+%sql
+CREATE OR REPLACE TABLE us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_rx AS 
+   select distinct pat_id, 
+          min(eligy_strt_dt) over (partition by pat_id, enrollment_episode) as overall_eligy_strt_dt,
+          max(eligy_end_dt)  over (partition by pat_id, enrollment_episode) as overall_eligy_end_dt
+  from us_commercial_catalog_prod.lgu_eplontersen.pt_rx_or_mx_enrt_komodo_1_rx

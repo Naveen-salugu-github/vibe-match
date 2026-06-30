@@ -1,0 +1,365 @@
+
+============================================================
+CELL 0 | markdown
+============================================================
+##A360
+
+============================================================
+CELL 1 | code
+============================================================
+from pyspark.sql.functions import unix_timestamp, from_unixtime,lit,concat_ws, col, concat,date_format,to_date
+from pyspark.sql.types import DateType
+from datetime import datetime,date
+
+a360 = spark.read.csv("/Volumes/us_commercial_catalog_prod/lgu_eplontersen/new_sp_a360/A360.csv",header=True)
+a360 = a360.withColumn("service_request_created_date_clean", from_unixtime(unix_timestamp("Service_Request_Created_Date", 'MM/dd/yyyy')).cast('date'))
+a360.createOrReplaceTempView("a360")
+
+a360.display()
+
+============================================================
+CELL 2 | code
+============================================================
+%sql
+select min(service_request_created_date_clean), max(service_request_created_date_clean) from a360
+
+============================================================
+CELL 3 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.a_360_recent_bck
+select * from us_commercial_catalog_prod.lgu_eplontersen.a_360_recent
+
+============================================================
+CELL 4 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.a_360_recent
+select * from a360
+
+============================================================
+CELL 5 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.a_360_combined_bck
+select * from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined
+
+============================================================
+CELL 6 | code
+============================================================
+a360_recent_date_format = spark.sql("""
+select distinct hcp_az_id,patient_id,Service_Request_Created_Date_clean from us_commercial_catalog_prod.lgu_eplontersen.a_360_recent 
+""")
+a360_recent_date_format = a360_recent_date_format.withColumn('Service_Request_Created_Date',to_date(col('service_request_created_date_clean')))
+a360_recent_date_format = a360_recent_date_format.drop("service_request_created_date_clean") 
+a360_recent_date_format.createOrReplaceTempView("a360_recent_date_format")
+
+============================================================
+CELL 7 | code
+============================================================
+%sql
+select * from a360_recent_date_format
+
+============================================================
+CELL 8 | code
+============================================================
+a360=spark.sql("""
+select distinct * from (
+select distinct  hcp_az_id, concat("PEP_ID-",regexp_extract(patient_id, '([0-9]+)')) as patient_id, Service_Request_Created_Date from a360_recent_date_format
+group by all
+union
+select distinct hcp_az_id, concat("PEP_ID-",regexp_extract(patient_id, '([0-9]+)')) as patient_id, Service_Request_Created_Date
+ from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined
+)
+where patient_id is not null
+""")
+
+a360.createOrReplaceTempView("a_360_combined")
+
+============================================================
+CELL 9 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.a_360_combined
+select distinct hcp_az_id,patient_id,min(Service_Request_Created_Date) as Service_Request_Created_Date from a_360_combined
+group by all
+
+============================================================
+CELL 10 | markdown
+============================================================
+## **Run from here if no need to create A360 Table
+
+============================================================
+CELL 11 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.sp_a360_mapping_bck
+select distinct * from us_commercial_catalog_prod.lgu_eplontersen.sp_a360_mapping 
+
+============================================================
+CELL 12 | code
+============================================================
+import re
+from datetime import datetime
+from pyspark.sql.functions import to_date, trim
+
+# Dynamically pick the latest AstraZenecaStatus_Summary_Daily file by MMDDYY date in filename
+volume_path = "/Volumes/us_commercial_catalog_prod/lgu_eplontersen/new_sp_a360/"
+prefix = "AstraZenecaStatus_Summary_Daily_"
+pattern = re.compile(rf"^{re.escape(prefix)}(\d{{6}})\.csv$")
+
+status_files = []
+for f in dbutils.fs.ls(volume_path):
+    match = pattern.match(f.name)
+    if match:
+        date_str = match.group(1)  # e.g. '040726'
+        file_date = datetime.strptime(date_str, "%m%d%y")
+        status_files.append((f, file_date))
+
+latest_file, latest_date = max(status_files, key=lambda x: x[1])
+print(f"Loading: {latest_file.name} (date: {latest_date.strftime('%Y-%m-%d')})")
+
+status = spark.read.format("csv").option("header", "true").load(latest_file.path)
+status = status.withColumn("Referral_Date", to_date("Referral_Date", "yyyyMMdd"))
+status = status.withColumn("Status_Date", to_date("Status_Date", "yyyyMMdd"))
+status = status.withColumn("Affiliate_ID", trim("Affiliate_ID"))
+# Join with hcp_demog to add az_id before creating temp view
+hcp_demog = spark.table("us_commercial_catalog_prod.lg_reference.hcp_demog").select("npi", "hcp_az_cust_id")
+status = status.join(hcp_demog, status.Physician_NPI == hcp_demog.npi, "left").drop("npi").withColumnRenamed("hcp_az_cust_id", "Physician_az_id")
+status.createOrReplaceTempView('status_file')
+
+============================================================
+CELL 13 | code
+============================================================
+# Enrich status_file with sp_metrics: coalesce referral_dt and hcp from sp_metrics where available
+spark.sql("""
+select distinct 
+  s.SP_ID,
+  CASE WHEN s.Affiliate_ID IS NOT NULL 
+  THEN concat("PEP_ID-",regexp_extract(s.Affiliate_ID, '([0-9]+)'))
+  ELSE s.Affiliate_ID END AS Affiliate_ID,
+  coalesce(date(m.MIN_REFERRAL_DT), s.Referral_Date) as Referral_Date,
+  coalesce(m.referral_HCP_AZ_ID, s.Physician_az_id) as Physician_az_id
+from status_file s
+left join us_commercial_catalog_prod.lgu_eplontersen.sp_metrics m
+on s.SP_ID = m.sp_pat_id
+where SP_ID is not null
+""").createOrReplaceTempView("status_file_upd")
+
+display(spark.sql("select * from status_file_upd"))
+
+============================================================
+CELL 14 | code
+============================================================
+%sql
+select min(Referral_Date),max(Referral_Date) from status_file_upd
+
+============================================================
+CELL 15 | code
+============================================================
+spark.sql("""
+select distinct s.SP_ID as sp_pat_id, s.Affiliate_ID as patient_id, s.Physician_az_id as hcp_az_cust_id, s.Referral_Date as referral_dt
+from status_file_upd s
+where Affiliate_ID is not null
+""").createOrReplaceTempView("sp_a360_matched")
+
+# display(spark.sql("select * from sp_a360_matched"))
+
+============================================================
+CELL 16 | code
+============================================================
+# A360 patients NOT in direct match, fuzzy-matched to status_file
+# on same HCP and Referral_Date within +/- 2 days of Service_Request_Created_Date
+# Ranked by closest date to ensure 1:1 mapping (1 sp_pat_id ↔ 1 patient_id)
+spark.sql("""
+select sp_pat_id, patient_id, hcp_az_cust_id, referral_dt from (
+  select *, 
+    row_number() over (partition by sp_pat_id order by days_diff) as sp_rank,
+    row_number() over (partition by patient_id order by days_diff) as pat_rank
+  from (
+    select distinct s.SP_ID as sp_pat_id, a.patient_id, a.hcp_az_id as hcp_az_cust_id, 
+      s.Referral_Date as referral_dt,
+      abs(datediff(s.Referral_Date, DATE(a.Service_Request_Created_Date))) as days_diff
+    from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined a
+    join status_file_upd s
+      on a.hcp_az_id = s.Physician_az_id
+      and s.Referral_Date between DATEADD(day, -2, DATE(a.Service_Request_Created_Date))
+                              and DATEADD(day, 2, DATE(a.Service_Request_Created_Date))
+    where a.patient_id not in (select distinct patient_id from sp_a360_matched)
+      and s.SP_ID not in (select distinct sp_pat_id from sp_a360_matched)
+  )
+)
+where sp_rank = 1 and pat_rank = 1
+""").createOrReplaceTempView("sp_a360_fuzzy_matched")
+
+# display(spark.sql("select * from sp_a360_fuzzy_matched"))
+
+============================================================
+CELL 17 | code
+============================================================
+# Status_file patients not in cell 5 (direct match) or cell 6 (fuzzy match), with NA as patient_id
+spark.sql("""
+select distinct s.SP_ID as sp_pat_id, 'NA' as patient_id, s.Physician_az_id as hcp_az_cust_id, s.Referral_Date as referral_dt
+from status_file_upd s
+where s.SP_ID not in (select distinct sp_pat_id from sp_a360_matched)
+  and s.SP_ID not in (select distinct sp_pat_id from sp_a360_fuzzy_matched)
+""").createOrReplaceTempView("sp_unmatched")
+
+# display(spark.sql("select * from sp_unmatched"))
+
+============================================================
+CELL 18 | code
+============================================================
+# A360 patients not in cell 5 (direct match) or cell 6 (fuzzy match), with NA as sp_pat_id
+spark.sql("""
+select distinct 'NA' as sp_pat_id, a.patient_id, a.hcp_az_id as hcp_az_cust_id, DATE(a.Service_Request_Created_Date) as referral_dt
+from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined a
+where a.patient_id not in (select distinct patient_id from sp_a360_matched)
+  and a.patient_id not in (select distinct patient_id from sp_a360_fuzzy_matched)
+""").createOrReplaceTempView("a360_unmatched")
+
+# display(spark.sql("select * from a360_unmatched"))
+
+============================================================
+CELL 19 | code
+============================================================
+# Union all 4 views into combined mapping
+spark.sql("""
+select *, 'direct_match' as data_src from sp_a360_matched
+union all
+select *, 'fuzzy_match' as data_src from sp_a360_fuzzy_matched
+union all
+select *, 'sp_only' as data_src from sp_unmatched
+union all
+select *, 'a360_only' as data_src from a360_unmatched
+""").createOrReplaceTempView("sp_a360_combined_1")
+
+============================================================
+CELL 20 | code
+============================================================
+spark.sql("""
+select *,
+  concat(
+    case when patient_id != 'NA' then regexp_extract(patient_id, '([0-9]+)') else patient_id end,
+    '-',
+    sp_pat_id
+  ) as uniq_pat_id,
+  case when sp_pat_id != 'NA' then 'SP' else 'A360' end as Source
+from sp_a360_combined_1
+""").createOrReplaceTempView("sp_a360_combined_2")
+
+# display(spark.sql("select * from sp_a360_combined_2"))
+
+============================================================
+CELL 21 | code
+============================================================
+# Dynamically determine geo alignment table (same logic as production notebook)
+try:
+    geo_table = spark.sql("select concat('us_commercial_catalog_prod.lg_targeting.stp_geoalignment_', date_format(current_date(), 'MMMyyyy'))").first()[0]
+    spark.table(geo_table).limit(1).collect()
+except:
+    geo_table = spark.sql("select concat('us_commercial_catalog_prod.lg_targeting.stp_geoalignment_', date_format(add_months(current_date(), -1), 'MMMyyyy'))").first()[0]
+
+print(f"Using geo table: {geo_table}")
+
+spark.sql(f"""
+with base as (
+  select 
+    hcp_az_cust_id as hcp_az_id, 
+    case when patient_id != 'NA' then regexp_extract(patient_id, '([0-9]+)') else patient_id end as patient_id,
+    sp_pat_id, referral_dt, uniq_pat_id, Source
+  from sp_a360_combined_2
+),
+hcp_details as (
+  select distinct
+    b.uniq_pat_id, b.patient_id, b.sp_pat_id, b.Source, b.referral_dt, b.hcp_az_id,
+    spl.hcp_cust_name, spl.npi,
+    spl.Specialty_desc, spl.SPECIALTY_GROUP_1,spl.zip, 
+    geo.terr_id, geo.terr_name, geo.dist_id, geo.district_name, geo.region_name,
+    idn.PRIMARY_IDN_ID as IDN_ID, idn.PRIMARY_IDN_Name as IDN_Name, idn.PRIMARY_IDN_Type as IDN_type
+  from base b
+  left join us_commercial_catalog_prod.lgu_eplontersen.d_hcp_specialty_dimension_stage1 spl on b.hcp_az_id = spl.az_cust_id
+  left join (select * from {geo_table} where team in ('BBU_ATTR','BBU_ATTR_PR','BBU_ATTR_1A')) geo on spl.zip = geo.zip
+  left join us_commercial_catalog_prod.lgu_eplontersen.d_idn_hcp_fctr_acct_stage1 idn on b.hcp_az_id = idn.hcp_Az_Cust_id
+)
+select distinct 
+  e.*,
+  hca.hca_address1 as idn_addr, hca.hca_city as idn_city, hca.hca_state_name as idn_state, hca.hca_zip as idn_zip,
+  case when coe.az_top_parent_id is not null then 1 else 0 end as coe_flag,
+  min(sta.referral_date) as rx_rcv_dt, min(a360.Service_Request_Created_Date) as Service_Request_Created_Date
+from hcp_details e
+left join us_commercial_catalog_prod.lg_reference.hca_profile hca on e.IDN_ID = hca.hca_az_cust_id
+left join us_commercial_catalog_prod.lgu_eplontersen.d_IDNs_WITH_COE coe on e.IDN_ID = coe.az_top_parent_id
+left join status_file_upd sta on e.sp_pat_id = sta.SP_ID
+left join (select *, regexp_extract(patient_id, '([0-9]+)') as patient_id_num from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined) a360 on e.patient_id = a360.patient_id_num
+group by all
+""").createOrReplaceTempView("sp_a360_final")
+
+display(spark.sql("select * from sp_a360_final"))
+
+============================================================
+CELL 22 | markdown
+============================================================
+###QC Checks
+
+============================================================
+CELL 23 | code
+============================================================
+%sql
+select uniq_pat_id,count(*) from sp_a360_final
+group by all
+having count(uniq_pat_id) > 1
+
+============================================================
+CELL 24 | code
+============================================================
+%sql
+select sp_pat_id,count(*) from sp_a360_final
+group by all
+having count(sp_pat_id) > 1
+
+============================================================
+CELL 25 | code
+============================================================
+%sql
+select patient_id,count(*) from sp_a360_final
+group by all
+having count(patient_id) > 1
+
+============================================================
+CELL 26 | code
+============================================================
+%sql
+select source,date(date_trunc('month',referral_dt)) as mnth,count(distinct uniq_pat_id) as pat_cnt from sp_a360_final
+group by all
+order by mnth,source
+
+============================================================
+CELL 27 | markdown
+============================================================
+###Final Table
+
+============================================================
+CELL 28 | code
+============================================================
+%sql
+create or replace table us_commercial_catalog_prod.lgu_eplontersen.sp_a360_mapping using delta as
+select distinct * from sp_a360_final
+
+============================================================
+CELL 29 | code
+============================================================
+%sql
+select count(Distinct hcp_az_id),count(Distinct uniq_pat_id) from us_commercial_catalog_prod.lgu_eplontersen.sp_a360_mapping
+
+============================================================
+CELL 30 | code
+============================================================
+%sql
+select min(Referral_Date),max(Referral_Date) from status_file_upd
+
+============================================================
+CELL 31 | code
+============================================================
+%sql
+select min(Service_Request_Created_Date), max(Service_Request_Created_Date) from us_commercial_catalog_prod.lgu_eplontersen.a_360_combined

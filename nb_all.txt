@@ -1,0 +1,460 @@
+
+============================================================
+CMD 0 | type=auto | subtype=command
+============================================================
+%md
+#Input
+
+============================================================
+CMD 1 | type=auto | subtype=command
+============================================================
+%python
+#NSP_mnthly="us_commercial_app_commons_prod.f_sls_nsp_mth"
+#DDD_mnthly="lg_salestooutlets.outlet_sales_md_mntly_anifro"
+#DDD_wkly="lg_salestooutlets.outlet_sales_md_wkly_anifro"
+#NSP_mthly_fact="LGU_LUPUS.NSP_mthly_fact"
+#NSP_wkly_fact="LGU_LUPUS.NSP_wkly_fact"
+#sle_fctr_mnthly="LGU_LUPUS.sle_fctr_mnthly_eLAAD"
+#sle_fctr_wkly="LGU_LUPUS.sle_fctr_wkly_eLAAD"
+
+============================================================
+CMD 2 | type=auto | subtype=command
+============================================================
+%md
+#switch to use unity catalog
+
+============================================================
+CMD 3 | type=auto | subtype=command
+============================================================
+%python
+# Unity Catalog  Phase II changes are done
+
+from pyspark.sql.functions import col, when
+
+NSP_mnthly="us_commercial_app_commons_prod.f_sls_nsp_mth"
+DDD_mnthly="us_commercial_catalog_prod.lg_salestooutlets.outlet_sales_md_mntly_anifro"
+DDD_wkly="us_commercial_catalog_prod.lg_salestooutlets.outlet_sales_md_wkly_anifro"
+NSP_mthly_fact="us_commercial_catalog_prod.LGU_LUPUS.NSP_mthly_fact"
+NSP_wkly_fact="us_commercial_catalog_prod.LGU_LUPUS.NSP_wkly_fact"
+sle_fctr_mnthly="us_commercial_catalog_prod.LGU_LUPUS.sle_fctr_mnthly_eLAAD"
+sle_fctr_wkly="us_commercial_catalog_prod.LGU_LUPUS.sle_fctr_wkly_eLAAD"
+cal_445 = 'us_commercial_catalog_prod.lgu_lupus.kxwj051_445_calendar'
+
+============================================================
+CMD 4 | type=auto | subtype=command
+============================================================
+%md
+##TableMonths
+
+============================================================
+CMD 5 | type=auto | subtype=command
+============================================================
+%python
+WeekMonthMapping1 = spark.sql(
+    """ Select
+  Distinct Substring(week, 1, 7) As yr_mnth,
+  week
+From
+  {}""".format(DDD_wkly)
+)
+# WeekMonthMapping1.createOrReplaceTempView("WeekMonthMapping")
+
+# MonthTable = spark.sql(""" Select Distinct yr_mnth From WeekMonthMapping """)
+# MonthTable.createOrReplaceTempView("MonthTable")
+WeekMonthMapping1.display()
+
+============================================================
+CMD 6 | type=auto | subtype=command
+============================================================
+%python
+WeekMonthMapping = spark.sql(
+    """ Select distinct week, Substring(Month, 1, 7) As yr_mnth from {} d left join {} c on d.week = c.week_end""".format(DDD_wkly, cal_445)
+)
+
+WeekMonthMapping.display()
+
+WeekMonthMapping.createOrReplaceTempView("WeekMonthMapping")
+
+MonthTable = spark.sql(""" Select Distinct yr_mnth From WeekMonthMapping """)
+MonthTable.createOrReplaceTempView("MonthTable")
+
+============================================================
+CMD 7 | type=auto | subtype=command
+============================================================
+%md
+##Monthly NSP Volume
+
+============================================================
+CMD 8 | type=auto | subtype=command
+============================================================
+%python
+Table1 = spark.sql(
+    """Select
+  Substring(sls_dt, 1, 7) As yr_mnth,
+  Case
+    when az_prod_id = "650912" then "BENLYSTA IV"
+    when az_prod_id = "650924" then "BENLYSTA IV"
+    when az_prod_id = "877743" then "BENLYSTA SUBQ"
+    when az_prod_id = "1441709" then "SAPHNELO"
+  end as Product,
+  Case
+    when az_prod_id = "650912" then eaches * 0.4716
+    when az_prod_id = "650924" then eaches * 0.1415
+    when az_prod_id = "877743" then eaches * 0.25
+    when az_prod_id = "1441709" then eaches * 1
+  end as units_eq,
+  eaches
+From
+  {}
+Where
+  az_prod_id in ("650912", "650924", "877743", "1441709")
+  And trade_class_desc = 'COMBINED' """.format(NSP_mnthly)
+)
+Table1.createOrReplaceTempView("Table1")
+
+Table2 = spark.sql(
+    """ Select
+  yr_mnth,
+  Product,
+  Sum(units_eq) As units_eq
+From
+  Table1
+Group By
+  yr_mnth,
+  Product """
+)
+Table2.createOrReplaceTempView("Table2")
+
+============================================================
+CMD 9 | type=auto | subtype=command
+============================================================
+%python
+Table2.display()
+
+============================================================
+CMD 10 | type=auto | subtype=command
+============================================================
+%md
+##Monthly DDD Volume
+
+============================================================
+CMD 11 | type=auto | subtype=command
+============================================================
+%python
+Table11 = spark.sql(
+    """ Select
+  Substring(month, 1, 7) As yr_mnth,
+  Case
+    When prod_id = "1335526" then 'BENLYSTA IV'
+    when prod_id = "1335669" then 'BENLYSTA IV'
+    when prod_id = "1335620" then 'BENLYSTA SUBQ'
+    when prod_id = "1335822" then 'BENLYSTA SUBQ'
+    when prod_id = "1438251" then 'SAPHNELO'
+    Else NULL
+  End As Product,
+  Case
+    When prod_id = "1335526" then units * 0.4716
+    when prod_id = "1335669" then units * 0.1415
+    when prod_id = "1335620" then units * 0.25
+    when prod_id = "1335822" then units * 0.25
+    when prod_id = "1438251" then units * 1
+    Else NULL
+  End As units_eq
+From
+  {}
+Where
+  prod_id IN (
+    '1335526',
+    '1335669',
+    '1335620',
+    '1335822',
+    '1438251'
+  )
+  And units <> 0 """.format(DDD_mnthly)
+)
+Table11.createOrReplaceTempView("Table11")
+
+Table12 = spark.sql(
+    """Select
+  yr_mnth,
+  Product,
+  Sum(units_eq) As units_eq
+From
+  Table11
+Group By
+  yr_mnth,
+  Product """
+)
+Table12.createOrReplaceTempView("Table12")
+
+============================================================
+CMD 12 | type=auto | subtype=command
+============================================================
+%python
+Table12.display()
+
+============================================================
+CMD 13 | type=auto | subtype=command
+============================================================
+%md
+##Monthly 
+
+============================================================
+CMD 14 | type=auto | subtype=command
+============================================================
+%python
+# When the 4-5-5 schedule occurs, IQVIA applies a factor of 80% to the atypical 5-week month in NSP so that 72 months data will trend consistently hence accounting for that change for month Nov-24
+
+Table2 = Table2.withColumn('units_eq', when(col('yr_mnth') == '2024-11', col('units_eq')/0.8).otherwise(col('units_eq')))
+
+Table2.createOrReplaceTempView("Table2")
+
+# Joining NSP and DDD to calculate monthly NSP Factors
+Table31 = spark.sql(
+    """Select
+  A.yr_mnth,
+  A.Product,
+  A.units_eq As NSP_Units,
+  B.units_eq As DDD_Units,
+  A.units_eq / B.units_eq As NSP_Factor_mthly
+From
+  Table2 A
+  Right Join Table12 B On A.yr_mnth = B.yr_mnth
+  And A.Product = B.Product
+Order By
+  yr_mnth"""
+)
+Table31.createOrReplaceTempView("Table31")
+
+Most_Recent_Factor = spark.sql(
+    """Select
+  Product,
+  NSP_Factor_mthly As Most_Recent_Factor
+From
+  Table31
+Where
+  yr_mnth IN (
+    Select
+      max(yr_mnth)
+    From
+      Table31
+  ) """
+)
+Most_Recent_Factor.createOrReplaceTempView("Most_Recent_Factor")
+## Filter added where Product is not NULL in Table31 (27/03/2024) to reduce redundancy
+Table32 = spark.sql(
+    """ Select
+  A.yr_mnth,
+  B.Product
+From
+  MonthTable A
+  Left Join (
+    Select
+      Distinct Product
+    From
+      Table31 where Product is not NULL
+  ) B """
+)
+Table32.createOrReplaceTempView("Table32")
+
+Table33 = spark.sql(
+    """ Select
+  A.yr_mnth,
+  A.Product,
+  B.NSP_Factor_mthly
+From
+  Table32 A
+  Left Join Table31 B On A.yr_mnth = B.yr_mnth
+  And A.Product = B.Product """
+)
+Table33.createOrReplaceTempView("Table33")
+# Table33.display()
+
+Table34 = spark.sql(
+    """ Select
+  A.yr_mnth,
+  A.Product,
+  Coalesce(A.NSP_Factor_mthly, B.Most_Recent_Factor) As NSP_Factor_mthly
+From
+  Table33 A
+  Left Join Most_Recent_Factor B On A.Product = B.Product
+Order By
+  A.yr_mnth"""
+)
+
+Table34.createOrReplaceTempView("Table34")
+Table34.display()
+
+============================================================
+CMD 15 | type=auto | subtype=command
+============================================================
+%python
+Table2.display()
+
+============================================================
+CMD 16 | type=auto | subtype=command
+============================================================
+%python
+nsp_monthly = spark.sql(
+    """ Select
+  LAST_DAY(A.YR_MNTH) as date,
+  A.Product,
+  Coalesce(A.NSP_Factor_mthly, B.Most_Recent_Factor) As NSP_Factor_mthly
+From
+  Table33 A
+  Left Join Most_Recent_Factor B On A.Product = B.Product
+Order By
+  A.yr_mnth"""
+)
+#nsp_monthly.display()
+
+============================================================
+CMD 17 | type=auto | subtype=command
+============================================================
+%python
+nsp_monthly.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable(NSP_mthly_fact)
+
+============================================================
+CMD 18 | type=auto | subtype=command
+============================================================
+%md
+##Weekly
+
+============================================================
+CMD 19 | type=auto | subtype=command
+============================================================
+%python
+nsp_wkly = spark.sql(
+    """ Select
+  B.week,
+  A.Product,
+  A.NSP_Factor_mthly as NSP_Factor_wkly
+From
+  Table34 A
+  Left Join WeekMonthMapping B On A.yr_mnth = B.yr_mnth
+Order By
+  B.week"""
+)
+nsp_wkly.display()
+
+============================================================
+CMD 20 | type=auto | subtype=command
+============================================================
+%python
+nsp_wkly.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable(NSP_wkly_fact)
+
+============================================================
+CMD 21 | type=auto | subtype=command
+============================================================
+%md
+# elaad factors monthly
+
+============================================================
+CMD 22 | type=auto | subtype=command
+============================================================
+%python
+spark.sql(
+    """select
+  *
+from
+  {}""".format(sle_fctr_mnthly)
+).drop("NSP_Factor_mthly").createOrReplaceTempView("sle_fctr_mnthly_eLAAD")
+
+============================================================
+CMD 23 | type=auto | subtype=command
+============================================================
+%python
+elaad_monthly = spark.sql(
+    """
+with NSP_mthly_fact AS (
+  select
+    left(date, 7) as YR_MNTH,
+    case
+      when Product like '%IV%' then 'IV'
+      when product like '%%SUBQ%' then 'SC'
+      else 'IV'
+    end as IV_SC_Cat,
+    case
+      when product like '%BENLYSTA%' then 'BENLYSTA'
+      else 'SAPHNELO'
+    end as product_name,
+    NSP_Factor_mthly
+  from
+    {}
+)
+select
+  a.*,
+  b.NSP_Factor_mthly
+from
+  sle_fctr_mnthly_eLAAD a
+  left join NSP_mthly_fact b on a.product_name = b.product_name
+  and a.YR_MNTH = b.YR_MNTH
+  and a.IV_SC_Cat = b.IV_SC_Cat""".format(NSP_mthly_fact)
+)
+
+============================================================
+CMD 24 | type=auto | subtype=command
+============================================================
+%python
+elaad_monthly.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable(sle_fctr_mnthly)
+
+============================================================
+CMD 25 | type=auto | subtype=command
+============================================================
+%md
+#elaad factors weekly
+
+============================================================
+CMD 26 | type=auto | subtype=command
+============================================================
+%python
+spark.sql("""select * from {}""".format(sle_fctr_wkly)).drop(
+    "NSP_Factor_wkly"
+).createOrReplaceTempView("sle_fctr_wkly_eLAAD")
+
+============================================================
+CMD 27 | type=auto | subtype=command
+============================================================
+%python
+elaad_wkly = spark.sql(
+    """
+  with NSP_wkly_fact AS (
+  select
+    week as week_end,
+    case
+      when Product like '%IV%' then 'IV'
+      when product like '%%SUBQ%' then 'SC'
+      else 'IV'
+    end as IV_SC_Cat,
+    case
+      when product like '%BENLYSTA%' then 'BENLYSTA'
+      else 'SAPHNELO'
+    end as product_name,
+    NSP_Factor_wkly
+  from
+    {}
+)
+select
+  a.*,
+  b.NSP_Factor_wkly
+from
+  sle_fctr_wkly_eLAAD a
+  left join NSP_wkly_fact b on a.product_name = b.product_name
+  and a.week_end = b.week_end
+  and a.IV_SC_Cat = b.IV_SC_Cat
+""".format(NSP_wkly_fact)
+)
+
+============================================================
+CMD 28 | type=auto | subtype=command
+============================================================
+%python
+elaad_wkly.write.format("delta").mode("overwrite").option(
+    "overwriteSchema", "true"
+).saveAsTable(sle_fctr_wkly)
