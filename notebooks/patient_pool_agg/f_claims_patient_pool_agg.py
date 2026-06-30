@@ -150,7 +150,10 @@ try:
 
     temp_full_config_df = (
         spark.read.table(f"{catalog_name}.{gold_claim_schema}.{config_table}")
-        .filter(col("table") == target_table_name)
+        # table-level filter omitted: config rows may still carry the legacy
+        # table name (f_patient_pool_agg). Scope is enforced via workstream
+        # enablement (lot_enablement = 'Y') below.
+        # .filter(col("table") == target_table_name)
     )
 
     # --------------------------------------------------------------------------
@@ -354,7 +357,9 @@ try:
             col("workstream"),
             col("patient_id"),
             col("patient_pool"),
-            col("patient_pool_desc"),
+            # actual column is patient_pool_description; alias to patient_pool_desc
+            # for consistency with all downstream steps
+            col("patient_pool_description").alias("patient_pool_desc"),
             col("most_recent_date"),
         )
         .filter(col("workstream").isin(workstreams))
@@ -465,11 +470,12 @@ try:
                 )
                 continue
 
-            # Distinct diagnosed patient_ids from the base table for this workstream
+            # Distinct diagnosed patient_ids from the base table for this workstream.
+            # Use patient_pool_description (actual column name) when reading raw table.
             dx_patients_df = (
                 spark.read.table(f"{catalog_name}.{gold_claim_schema}.{base_table_name}")
                 .filter(col("workstream") == ws)
-                .filter(col("patient_pool_desc").isin(dx_desc_values))
+                .filter(col("patient_pool_description").isin(dx_desc_values))
                 .select("patient_id")
                 .distinct()
             )
